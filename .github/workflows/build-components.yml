@@ -17,6 +17,9 @@ env:
   ARCH: arm64
   CROSS_COMPILE: aarch64-linux-gnu-
 
+permissions:
+  contents: write
+
 jobs:
   build-components:
     runs-on: ubuntu-22.04
