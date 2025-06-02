@@ -176,8 +176,11 @@ jobs:
               [ -f "$patch" ] && git apply "$patch"
             done
             
-            # Use our minimal config
-            cp ${{ github.workspace }}/configs/kernel-config .config
+            # Use default config for now
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
+            # Enable required options
+            ./scripts/config --enable CONFIG_ARCH_SUNXI
+            ./scripts/config --enable CONFIG_MACH_SUN50I
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules modules_install
