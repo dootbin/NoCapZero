@@ -90,8 +90,6 @@ jobs:
             build-essential \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabihf \
-            g++-arm-linux-gnueabihf \
             device-tree-compiler \
             u-boot-tools \
             bison \
@@ -131,21 +129,19 @@ jobs:
       - name: Clone and build U-Boot
         run: |
           if [ ! -d /tmp/build-cache/u-boot ]; then
-            git clone --depth 1 -b v2018.05-h618 \
-              https://github.com/orangepi-xunlong/u-boot-orangepi.git \
+            git clone --depth 1 -b v2025.01 \
+              https://github.com/u-boot/u-boot.git \
               /tmp/build-cache/u-boot
             cd /tmp/build-cache/u-boot
             
-            # Apply patches
+            # Apply patches if any
             for patch in ${{ github.workspace }}/patches/uboot/*.patch; do
               [ -f "$patch" ] && git apply "$patch"
             done
             
-            # U-Boot needs 32-bit ARM compiler even for ARM64 boards
-            export ARCH=arm
-            export CROSS_COMPILE=arm-linux-gnueabihf-
-            make orangepi_zero2w_defconfig
-            make -j$(nproc)
+            # Build with aarch64 compiler for mainline U-Boot
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
           fi
 
       - name: Clone and build kernel
