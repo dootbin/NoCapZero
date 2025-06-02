@@ -21,7 +21,7 @@ on:
 env:
   DEBIAN_FRONTEND: noninteractive
   # Pre-built component URLs - use specific version or 'latest' 
-  COMPONENTS_VERSION: v1.0.0
+  COMPONENTS_VERSION: latest
   MALI_DRIVER_URL: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
 jobs:
