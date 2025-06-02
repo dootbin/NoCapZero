@@ -46,6 +46,7 @@ jobs:
   build:
     needs: setup
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     strategy:
       matrix:
         variant: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -143,6 +144,7 @@ jobs:
 
       - name: Build components from source (if needed)
         if: steps.download_uboot.outputs.success == 'false' || steps.download_kernel.outputs.success == 'false'
+        timeout-minutes: 75
         run: |
           echo "Prebuilt components not available, building from source..."
           
