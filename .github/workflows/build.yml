@@ -181,9 +181,22 @@ jobs:
               https://github.com/orangepi-xunlong/linux-orangepi.git kernel
             cd kernel
             
+            # Use our custom kernel config for OrangePi Zero 2W
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
-            ./scripts/config --enable CONFIG_ARCH_SUNXI
-            ./scripts/config --enable CONFIG_MACH_SUN50I
+            # Apply our custom configuration
+            while IFS= read -r line; do
+              if [[ $line == CONFIG_* ]] && [[ $line == *=y ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --enable "$config_name"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=m ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --module "$config_name"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=* ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                config_value=$(echo "$line" | cut -d'=' -f2)
+                ./scripts/config --set-str "$config_name" "$config_value"
+              fi
+            done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
