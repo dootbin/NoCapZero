@@ -84,7 +84,8 @@ jobs:
           echo "Building U-Boot $UBOOT_TAG"
           
           git clone --depth 1 -b "$UBOOT_TAG" \
-            https://github.com/u-boot/u-boot.git .
+            https://github.com/u-boot/u-boot.git u-boot-src
+          cd u-boot-src
           
           # Apply patches if any
           for patch in ${{ github.workspace }}/patches/uboot/*.patch; do
@@ -92,7 +93,7 @@ jobs:
           done
           
           # Copy BL31
-          cp ../arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
+          cp ../../arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
           
           # Build U-Boot
           make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
@@ -105,7 +106,8 @@ jobs:
         run: |
           cd build/kernel
           git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
-            https://github.com/orangepi-xunlong/linux-orangepi.git .
+            https://github.com/orangepi-xunlong/linux-orangepi.git kernel-src
+          cd kernel-src
           
           # Apply custom patches
           for patch in ${{ github.workspace }}/patches/kernel/*.patch; do
@@ -150,8 +152,8 @@ jobs:
           fi
           
           # Install modules
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=../output/modules modules_install
-          cd ../output
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=../../output/modules modules_install
+          cd ../../output
           tar -czf ${{ github.workspace }}/artifacts/modules.tar.gz modules/
 
       - name: Download Mali GPU driver
@@ -190,7 +192,7 @@ jobs:
             "build_date": "$(date -u +"%Y-%m-%d %H:%M:%S UTC")",
             "git_commit": "${{ github.sha }}",
             "git_ref": "${{ github.ref }}",
-            "kernel_version": "$(cd ${{ github.workspace }}/build/kernel && make kernelversion)",
+            "kernel_version": "$(cd ${{ github.workspace }}/build/kernel/kernel-src && make kernelversion)",
             "uboot_version": "latest",
             "components": {
               "uboot": "u-boot-sunxi-with-spl.bin",
