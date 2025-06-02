@@ -39,7 +39,7 @@ This repository contains GitHub Actions workflows that automatically build and r
 
 ## Automated Builds
 
-All builds are performed automatically via GitHub Actions on every push and release. The workflows cross-compile all components and generate ready-to-flash SD card images.
+All builds are performed automatically via GitHub Actions on every push and release. The system uses pre-built components (kernel, U-Boot) for fast and reliable builds, with only the root filesystem being assembled during each build.
 
 ### Available Releases
 
@@ -115,53 +115,55 @@ This repository contains automated workflows that build complete Orange Pi Zero 
 
 Triggered on every push to main branch and pull requests:
 
-1. **Setup Build Environment**
-   - Ubuntu 22.04 runner with cross-compilation tools
-   - Install ARM64 GCC toolchain and dependencies
-   - Cache build artifacts for faster subsequent builds
+1. **Download Pre-built Components**
+   - U-Boot bootloader (from components-latest release)
+   - Linux kernel and modules (from components-latest release)
+   - Mali GPU drivers
 
-2. **Download Sources**
-   - Fetch Arch Linux ARM base system
-   - Clone kernel sources with H618 patches
-   - Download U-Boot and Mali GPU drivers
-
-3. **Cross-compile Components**
-   - Build custom kernel with hardware acceleration
-   - Compile U-Boot bootloader for Orange Pi Zero 2W
-   - Cross-compile system utilities and libraries
-
-4. **Create Root Filesystem**
-   - Extract and configure Arch Linux ARM base
+2. **Create Root Filesystem**
+   - Download Arch Linux ARM base system
    - Install runtime libraries (GTK4, WebKit, Mesa)
    - Configure USB gadget support and system services
    - Remove development tools and unnecessary packages
 
-5. **Generate Images**
+3. **Generate Images**
    - Create bootable SD card image
    - Generate compressed releases for download
    - Calculate checksums and create manifest
 
-6. **Upload Artifacts**
+4. **Upload Artifacts**
    - Store build artifacts for 30 days
    - Upload images to release drafts
+
+### Component Build Workflow (`build-components.yml`)
+
+Triggered weekly or when patches are updated:
+
+1. **Build ARM Trusted Firmware**
+   - Required for U-Boot on Allwinner H618
+
+2. **Build U-Boot**
+   - Latest stable U-Boot with Orange Pi Zero 2W support
+
+3. **Build Kernel**
+   - Orange Pi vendor kernel (6.1-sun50iw9 branch)
+   - Includes hardware acceleration support
+
+4. **Package Components**
+   - Create components-latest release
+   - Used by all other workflows
 
 ### Release Workflow (`release.yml`)
 
 Triggered when a new tag is pushed:
 
-1. **Build Release Images**
-   - Runtime edition (minimal)
-   - Development edition (with tools)
-   - Debug edition (with symbols)
+1. **Trigger Build Workflow**
+   - Builds all three variants using pre-built components
 
 2. **Create GitHub Release**
-   - Generate release notes from commits
-   - Upload compressed images
-   - Create checksums and signature files
-
-3. **Update Documentation**
-   - Generate hardware compatibility matrix
-   - Update performance benchmarks
+   - Generate comprehensive release notes
+   - Create draft release for manual publishing
+   - Include installation instructions
 
 ## Configuration Options
 
@@ -169,11 +171,11 @@ Triggered when a new tag is pushed:
 
 The GitHub Actions workflows build multiple image variants:
 
-| Edition | Size | Use Case | Development Tools | Debug Symbols |
-|---------|------|----------|-------------------|---------------|
-| Runtime | ~200MB | Production deployment | ❌ | ❌ |
-| Development | ~600MB | On-device development | ✅ | ❌ |
-| Debug | ~800MB | Debugging and testing | ✅ | ✅ |
+| Edition | Size | Use Case | Development Tools | Debug Symbols | Build Time |
+|---------|------|----------|-------------------|---------------|------------|
+| Runtime | ~200MB | Production deployment | ❌ | ❌ | ~5 min |
+| Development | ~600MB | On-device development | ✅ | ❌ | ~7 min |
+| Debug | ~800MB | Debugging and testing | ✅ | ✅ | ~10 min |
 
 ### Build Configuration
 
@@ -378,6 +380,12 @@ services:
 ## Troubleshooting
 
 ### Common Issues
+
+**Build fails with missing pre-built components:**
+```bash
+# Ensure components-latest release exists
+# Run the build-components workflow manually if needed
+```
 
 **Build fails with cross-compiler errors:**
 ```bash

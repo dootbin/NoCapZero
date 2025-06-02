@@ -1,7 +1,10 @@
-# Minimal kernel config for Orange Pi Zero 2W (Allwinner H618)
+# Kernel config for Orange Pi Zero 2W (Allwinner H618)
 CONFIG_LOCALVERSION="-orangepi-zero2w"
 CONFIG_ARCH_SUNXI=y
 CONFIG_ARM64=y
+CONFIG_MODULES=y
+
+# Core system support
 CONFIG_DRM=y
 CONFIG_VIDEO_SUNXI_CEDRUS=y
 CONFIG_RFKILL=y
@@ -10,3 +13,45 @@ CONFIG_CFG80211=y
 CONFIG_USB_OTG=y
 CONFIG_USB_GADGET=y
 CONFIG_EXT4_FS=y
+
+# AC200 Multi-Function Device support (required for Ethernet)
+CONFIG_MFD_ACX00=y
+CONFIG_MFD_SUNXI_AC200=y
+
+# Ethernet/Network support for H618 with AC200
+CONFIG_NET_VENDOR_ALLWINNER=y
+CONFIG_SUNXI_GMAC=y
+CONFIG_SUNXI_EXT_PHY=y
+CONFIG_SUNXI_EPHY=y
+
+# PHY drivers
+CONFIG_PHYLIB=y
+CONFIG_MOTORCOMM_PHY=y
+
+# I2C support (required for AC200 communication)
+CONFIG_I2C=y
+CONFIG_I2C_SUNXI=y
+
+# NVMEM support (dependency for AC200 PHY)
+CONFIG_NVMEM=y
+CONFIG_NVMEM_SUNXI_SID=y
+
+# Device Tree support
+CONFIG_OF=y
+CONFIG_OF_DEVICE=y
+
+# Clock support
+CONFIG_COMMON_CLK=y
+CONFIG_CLK_SUNXI=y
+
+# Power management
+CONFIG_REGULATOR=y
+CONFIG_REGULATOR_FIXED_VOLTAGE=y
+
+# GPIO support
+CONFIG_GPIOLIB=y
+CONFIG_GPIO_SUNXI=y
+
+# PWM support (required for AC200 clock)
+CONFIG_PWM=y
+CONFIG_PWM_SUNXI=y
