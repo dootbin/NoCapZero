@@ -129,7 +129,7 @@ jobs:
       - name: Clone and build U-Boot
         run: |
           if [ ! -d /tmp/build-cache/u-boot ]; then
-            git clone --depth 1 -b v2023.07 \
+            git clone --depth 1 -b v2018.05-h618 \
               https://github.com/orangepi-xunlong/u-boot-orangepi.git \
               /tmp/build-cache/u-boot
             cd /tmp/build-cache/u-boot
