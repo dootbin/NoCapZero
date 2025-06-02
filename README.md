@@ -143,7 +143,7 @@ Triggered weekly or when patches are updated:
    - Required for U-Boot on Allwinner H618
 
 2. **Build U-Boot**
-   - Mainline U-Boot v2025.01 with Orange Pi Zero 2W support
+   - Latest stable U-Boot with Orange Pi Zero 2W support
 
 3. **Build Kernel**
    - Orange Pi vendor kernel (6.1-sun50iw9 branch)

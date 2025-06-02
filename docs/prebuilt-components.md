@@ -15,12 +15,14 @@ The simplified workflow downloads pre-built components instead of building from 
 ### 1. Build U-Boot
 
 ```bash
-# Clone U-Boot
-git clone --depth 1 -b v2025.01 https://github.com/u-boot/u-boot.git
+# Clone U-Boot (latest stable)
+UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags\///')
+git clone --depth 1 -b "$UBOOT_TAG" https://github.com/u-boot/u-boot.git
 cd u-boot
 
-# Build ARM Trusted Firmware first
-git clone --depth 1 -b v2.10.0 https://github.com/ARM-software/arm-trusted-firmware.git
+# Build ARM Trusted Firmware first (latest stable)
+ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags\///')
+git clone --depth 1 -b "$ATF_TAG" https://github.com/ARM-software/arm-trusted-firmware.git
 cd arm-trusted-firmware
 make PLAT=sun50i_h616 CROSS_COMPILE=aarch64-linux-gnu- bl31
 cp build/sun50i_h616/release/bl31.bin ../
