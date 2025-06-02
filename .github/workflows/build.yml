@@ -1,6 +1,10 @@
 name: Build Orange Pi Zero 2W Images
 
 on:
+  workflow_run:
+    workflows: ["Build and Publish Components"]
+    types: [completed]
+    branches: [main]
   push:
     branches: [ main, develop ]
   pull_request:
@@ -47,6 +51,7 @@ jobs:
     needs: setup
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
     strategy:
       matrix:
         variant: ${{ fromJson(needs.setup.outputs.matrix) }}
