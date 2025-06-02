@@ -239,25 +239,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate release tag
-        id: release-tag
-        run: |
-          TAG="components-$(date +%Y%m%d-%H%M%S)"
-          NAME="Components Build $(date +%Y-%m-%d)"
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "name=${NAME}" >> $GITHUB_OUTPUT
-
       - name: Create Component Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/use-prebuilt-binaries'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.release-tag.outputs.tag }}
-          name: ${{ steps.release-tag.outputs.name }}
+          tag_name: components-latest
+          name: Latest Components Build ($(date +'%Y-%m-%d %H:%M'))
+          prerelease: false
           files: artifacts/*
           body: |
             ## Pre-built Components for Orange Pi Zero 2W
             
-            Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
             Git Commit: ${{ github.sha }}
             
             ### Components:
@@ -267,7 +259,8 @@ jobs:
             - Kernel modules
             - Mali GPU driver
             
-            ### To use these components:
-            Update `COMPONENTS_VERSION` in `.github/workflows/build.yml` to this release tag.
+            ### Usage:
+            These components are automatically used by the image build workflow.
+            The `components-latest` tag always points to the most recent build.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

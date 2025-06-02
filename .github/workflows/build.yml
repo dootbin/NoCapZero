@@ -24,8 +24,8 @@ on:
 
 env:
   DEBIAN_FRONTEND: noninteractive
-  # Pre-built component URLs - use specific version or 'latest' 
-  COMPONENTS_VERSION: latest
+  # Pre-built components use the 'components-latest' release tag
+  COMPONENTS_TAG: components-latest
   MALI_DRIVER_URL: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
 jobs:
@@ -78,31 +78,16 @@ jobs:
             rsync \
             device-tree-compiler
 
-      - name: Get latest component release
-        id: get-release
-        run: |
-          # Get the latest release tag that starts with "components-"
-          LATEST_TAG=$(gh release list --limit 10 | grep "components-" | head -1 | awk '{print $3}')
-          if [ -z "$LATEST_TAG" ]; then
-            echo "No component releases found"
-            echo "tag=" >> $GITHUB_OUTPUT
-          else
-            echo "Found latest component release: $LATEST_TAG"
-            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Download pre-built U-Boot
         id: download_uboot
         run: |
           mkdir -p /tmp/downloads
           
-          # Try to download from our latest release
-          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+          # Try to download from our components-latest release
+          if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
             echo "success=true" >> $GITHUB_OUTPUT
-            echo "Downloaded U-Boot from release ${{ steps.get-release.outputs.tag }}"
+            echo "Downloaded U-Boot from release ${{ env.COMPONENTS_TAG }}"
           # Try alternative source from GitHub Doct2O repository (H618 specific)
           elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
             https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
@@ -119,27 +104,27 @@ jobs:
           SUCCESS=true
           
           # Download pre-built kernel image
-          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/Image \
-            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/Image 2>/dev/null; then
-            echo "Downloaded prebuilt kernel from release ${{ steps.get-release.outputs.tag }}"
+          if wget -O /tmp/downloads/Image \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/Image 2>/dev/null; then
+            echo "Downloaded prebuilt kernel from release ${{ env.COMPONENTS_TAG }}"
           else
             echo "WARNING: Failed to download prebuilt kernel"
             SUCCESS=false
           fi
           
           # Download pre-built DTB
-          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
-            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
-            echo "Downloaded prebuilt DTB from release ${{ steps.get-release.outputs.tag }}"
+          if wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
+            echo "Downloaded prebuilt DTB from release ${{ env.COMPONENTS_TAG }}"
           else
             echo "WARNING: Failed to download prebuilt DTB"
             SUCCESS=false
           fi
           
           # Download kernel modules tarball
-          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/modules.tar.gz \
-            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/modules.tar.gz 2>/dev/null; then
-            echo "Downloaded prebuilt modules from release ${{ steps.get-release.outputs.tag }}"
+          if wget -O /tmp/downloads/modules.tar.gz \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/modules.tar.gz 2>/dev/null; then
+            echo "Downloaded prebuilt modules from release ${{ env.COMPONENTS_TAG }}"
           else
             echo "WARNING: Failed to download prebuilt modules"
             SUCCESS=false
