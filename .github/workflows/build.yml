@@ -5,8 +5,6 @@ on:
     workflows: ["Build and Publish Components"]
     types: [completed]
     branches: [main]
-  push:
-    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:

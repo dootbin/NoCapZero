@@ -11,6 +11,7 @@ on:
       - 'patches/uboot/**'
       - 'configs/kernel-config'
       - '.github/workflows/build-components.yml'
+      - '!.github/workflows/build.yml'  # Don't trigger when build.yml changes
 
 env:
   DEBIAN_FRONTEND: noninteractive
