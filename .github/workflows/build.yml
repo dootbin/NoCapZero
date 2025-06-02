@@ -76,12 +76,20 @@ jobs:
         id: download_uboot
         run: |
           mkdir -p /tmp/downloads
+          
+          # Try to download from our releases first
           if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
             https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_VERSION }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
             echo "success=true" >> $GITHUB_OUTPUT
+            echo "Downloaded U-Boot from release"
+          # Try alternative source from GitHub Doct2O repository (H618 specific)
+          elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "Downloaded U-Boot from Doct2O repository"
           else
             echo "success=false" >> $GITHUB_OUTPUT
-            echo "WARNING: Failed to download prebuilt U-Boot"
+            echo "WARNING: Failed to download prebuilt U-Boot from all sources"
           fi
 
       - name: Download pre-built kernel and modules
