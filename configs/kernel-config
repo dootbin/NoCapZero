@@ -2,6 +2,7 @@
 CONFIG_LOCALVERSION="-orangepi-zero2w"
 CONFIG_ARCH_SUNXI=y
 CONFIG_ARM64=y
+CONFIG_MODULES=y
 
 # Core system support
 CONFIG_DRM=y
