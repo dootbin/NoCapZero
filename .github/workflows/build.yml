@@ -78,16 +78,31 @@ jobs:
             rsync \
             device-tree-compiler
 
+      - name: Get latest component release
+        id: get-release
+        run: |
+          # Get the latest release tag that starts with "components-"
+          LATEST_TAG=$(gh release list --limit 10 | grep "components-" | head -1 | awk '{print $3}')
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No component releases found"
+            echo "tag=" >> $GITHUB_OUTPUT
+          else
+            echo "Found latest component release: $LATEST_TAG"
+            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Download pre-built U-Boot
         id: download_uboot
         run: |
           mkdir -p /tmp/downloads
           
-          # Try to download from our releases first
-          if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_VERSION }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+          # Try to download from our latest release
+          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
             echo "success=true" >> $GITHUB_OUTPUT
-            echo "Downloaded U-Boot from release"
+            echo "Downloaded U-Boot from release ${{ steps.get-release.outputs.tag }}"
           # Try alternative source from GitHub Doct2O repository (H618 specific)
           elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
             https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
@@ -104,22 +119,28 @@ jobs:
           SUCCESS=true
           
           # Download pre-built kernel image
-          if ! wget -O /tmp/downloads/Image \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_VERSION }}/Image 2>/dev/null; then
+          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/Image \
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/Image 2>/dev/null; then
+            echo "Downloaded prebuilt kernel from release ${{ steps.get-release.outputs.tag }}"
+          else
             echo "WARNING: Failed to download prebuilt kernel"
             SUCCESS=false
           fi
           
           # Download pre-built DTB
-          if ! wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_VERSION }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
+          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
+            echo "Downloaded prebuilt DTB from release ${{ steps.get-release.outputs.tag }}"
+          else
             echo "WARNING: Failed to download prebuilt DTB"
             SUCCESS=false
           fi
           
           # Download kernel modules tarball
-          if ! wget -O /tmp/downloads/modules.tar.gz \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_VERSION }}/modules.tar.gz 2>/dev/null; then
+          if [ -n "${{ steps.get-release.outputs.tag }}" ] && wget -O /tmp/downloads/modules.tar.gz \
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.get-release.outputs.tag }}/modules.tar.gz 2>/dev/null; then
+            echo "Downloaded prebuilt modules from release ${{ steps.get-release.outputs.tag }}"
+          else
             echo "WARNING: Failed to download prebuilt modules"
             SUCCESS=false
           fi
