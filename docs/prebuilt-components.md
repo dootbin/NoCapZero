@@ -38,8 +38,9 @@ make ARCH=arm CROSS_COMPILE=aarch64-linux-gnu- BL31=bl31.bin -j$(nproc)
 ### 2. Build Mainline Kernel
 
 ```bash
-# Clone mainline kernel
-git clone --depth 1 -b v6.12 https://github.com/torvalds/linux.git
+# Clone mainline kernel (latest stable)
+KERNEL_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/torvalds/linux.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+$' | tail -n1 | sed 's/.*refs\/tags\///')
+git clone --depth 1 -b "$KERNEL_TAG" https://github.com/torvalds/linux.git
 cd linux
 
 # Use a minimal config for Orange Pi Zero 2W
