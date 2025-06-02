@@ -73,37 +73,128 @@ jobs:
             device-tree-compiler
 
       - name: Download pre-built U-Boot
+        id: download_uboot
         run: |
           mkdir -p /tmp/downloads
-          wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/u-boot-sunxi-with-spl.bin
+          if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "WARNING: Failed to download prebuilt U-Boot"
+          fi
 
       - name: Download pre-built kernel and modules
+        id: download_kernel
         run: |
+          SUCCESS=true
+          
           # Download pre-built kernel image
-          wget -O /tmp/downloads/Image \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/Image
+          if ! wget -O /tmp/downloads/Image \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/Image 2>/dev/null; then
+            echo "WARNING: Failed to download prebuilt kernel"
+            SUCCESS=false
+          fi
           
           # Download pre-built DTB
-          wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/sun50i-h618-orangepi-zero2w.dtb
+          if ! wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
+            echo "WARNING: Failed to download prebuilt DTB"
+            SUCCESS=false
+          fi
           
           # Download kernel modules tarball
-          wget -O /tmp/downloads/modules.tar.gz \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/modules.tar.gz
+          if ! wget -O /tmp/downloads/modules.tar.gz \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/modules.tar.gz 2>/dev/null; then
+            echo "WARNING: Failed to download prebuilt modules"
+            SUCCESS=false
+          fi
           
-          # Extract modules
-          mkdir -p /tmp
-          tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+          # Extract modules if download succeeded
+          if [ -f /tmp/downloads/modules.tar.gz ]; then
+            mkdir -p /tmp
+            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+          fi
+          
+          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
 
       - name: Download Mali GPU driver
         run: |
-          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL"
+          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL" || echo "WARNING: Failed to download Mali driver"
 
       - name: Download Arch Linux ARM base
         run: |
           wget -O /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
             http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+
+      - name: Build components from source (if needed)
+        if: steps.download_uboot.outputs.success == 'false' || steps.download_kernel.outputs.success == 'false'
+        run: |
+          echo "Prebuilt components not available, building from source..."
+          
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            bison \
+            flex \
+            libssl-dev \
+            libgnutls28-dev \
+            bc \
+            u-boot-tools
+          
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          # Build U-Boot if needed
+          if [ ! -f /tmp/downloads/u-boot-sunxi-with-spl.bin ]; then
+            cd /tmp
+            # Get latest ATF
+            ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags//')
+            git clone --depth 1 -b "$ATF_TAG" https://github.com/ARM-software/arm-trusted-firmware.git
+            cd arm-trusted-firmware
+            make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
+            
+            # Get latest U-Boot
+            cd /tmp
+            UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags//')
+            git clone --depth 1 -b "$UBOOT_TAG" https://github.com/u-boot/u-boot.git
+            cd u-boot
+            cp ../arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin -j$(nproc)
+            cp u-boot-sunxi-with-spl.bin /tmp/downloads/
+          fi
+          
+          # Build kernel if needed
+          if [ ! -f /tmp/downloads/Image ] || [ ! -f /tmp/downloads/modules.tar.gz ]; then
+            cd /tmp
+            git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
+              https://github.com/orangepi-xunlong/linux-orangepi.git kernel
+            cd kernel
+            
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
+            ./scripts/config --enable CONFIG_ARCH_SUNXI
+            ./scripts/config --enable CONFIG_MACH_SUN50I
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
+            
+            cp arch/arm64/boot/Image /tmp/downloads/
+            if [ -f arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ]; then
+              cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb /tmp/downloads/
+            else
+              # Try alternative DTB locations
+              find arch/arm64/boot/dts -name "*orangepi*zero2w*.dtb" -exec cp {} /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \;
+            fi
+            
+            # Install modules
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
+            cd /tmp
+            tar -czf /tmp/downloads/modules.tar.gz -C /tmp/modules_install .
+            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+          fi
 
       - name: Create root filesystem
         run: |

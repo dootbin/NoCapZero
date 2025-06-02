@@ -132,7 +132,21 @@ jobs:
           
           # Copy outputs
           cp arch/arm64/boot/Image ${{ github.workspace }}/artifacts/
-          cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ${{ github.workspace }}/artifacts/
+          
+          # Find and copy DTB (handle different locations)
+          if [ -f arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ]; then
+            cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ${{ github.workspace }}/artifacts/
+          else
+            # Search for Orange Pi Zero 2W DTB in alternative locations
+            DTB_FILE=$(find arch/arm64/boot/dts -name "*orangepi*zero2w*.dtb" -o -name "*h618*.dtb" | head -1)
+            if [ -n "$DTB_FILE" ]; then
+              cp "$DTB_FILE" ${{ github.workspace }}/artifacts/sun50i-h618-orangepi-zero2w.dtb
+              echo "Found DTB at: $DTB_FILE"
+            else
+              echo "WARNING: Could not find Orange Pi Zero 2W DTB file"
+              echo "You may need to add patches or use a different kernel source"
+            fi
+          fi
           
           # Install modules
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=../output/modules modules_install
@@ -144,7 +158,30 @@ jobs:
           wget -O ${{ github.workspace }}/artifacts/libmali.so \
             https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
 
+      - name: Validate build outputs
+        id: validate
+        run: |
+          cd ${{ github.workspace }}/artifacts
+          MISSING_FILES=""
+          
+          # Check required files
+          for file in u-boot-sunxi-with-spl.bin Image sun50i-h618-orangepi-zero2w.dtb modules.tar.gz libmali.so; do
+            if [ ! -f "$file" ]; then
+              MISSING_FILES="$MISSING_FILES $file"
+            fi
+          done
+          
+          if [ -n "$MISSING_FILES" ]; then
+            echo "ERROR: Missing build outputs:$MISSING_FILES"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "All required components built successfully"
+            echo "valid=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate metadata
+        if: steps.validate.outputs.valid == 'true'
         run: |
           cd ${{ github.workspace }}/artifacts
           cat > metadata.json << EOF
