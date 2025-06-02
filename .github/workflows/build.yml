@@ -113,7 +113,13 @@ jobs:
           # Extract modules if download succeeded
           if [ -f /tmp/downloads/modules.tar.gz ]; then
             mkdir -p /tmp
-            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+            if tar -tzf /tmp/downloads/modules.tar.gz >/dev/null 2>&1; then
+              tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+            else
+              echo "WARNING: modules.tar.gz is corrupted or empty"
+              rm -f /tmp/downloads/modules.tar.gz
+              SUCCESS=false
+            fi
           fi
           
           echo "success=$SUCCESS" >> $GITHUB_OUTPUT
@@ -152,14 +158,14 @@ jobs:
           if [ ! -f /tmp/downloads/u-boot-sunxi-with-spl.bin ]; then
             cd /tmp
             # Get latest ATF
-            ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags//')
+            ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags\///')
             git clone --depth 1 -b "$ATF_TAG" https://github.com/ARM-software/arm-trusted-firmware.git
             cd arm-trusted-firmware
             make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
             
             # Get latest U-Boot
             cd /tmp
-            UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags//')
+            UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags\///')
             git clone --depth 1 -b "$UBOOT_TAG" https://github.com/u-boot/u-boot.git
             cd u-boot
             cp ../arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
@@ -193,7 +199,9 @@ jobs:
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
             cd /tmp
             tar -czf /tmp/downloads/modules.tar.gz -C /tmp/modules_install .
-            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+            # Extract to the expected location
+            mkdir -p /tmp/modules
+            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/modules/
           fi
 
       - name: Create root filesystem
