@@ -22,7 +22,7 @@ env:
   DEBIAN_FRONTEND: noninteractive
   # Pre-built component URLs - use specific version or 'latest' 
   COMPONENTS_VERSION: v1.0.0
-  MALI_DRIVER_URL: https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
+  MALI_DRIVER_URL: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
 jobs:
   setup:

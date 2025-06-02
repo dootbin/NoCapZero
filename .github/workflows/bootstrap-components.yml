@@ -115,7 +115,7 @@ jobs:
           
           # Download Mali driver
           wget -O ${{ github.workspace }}/artifacts/libmali.so \
-            https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
+            https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
       - name: Generate metadata
         run: |
