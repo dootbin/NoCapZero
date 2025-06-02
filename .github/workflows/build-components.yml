@@ -129,6 +129,8 @@ jobs:
           fi
           
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+          # Ensure modules are enabled after olddefconfig
+          ./scripts/config --enable CONFIG_MODULES
           
           # Build kernel and modules
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
