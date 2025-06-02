@@ -139,8 +139,8 @@ jobs:
               [ -f "$patch" ] && git apply "$patch"
             done
             
-            make CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-            make CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
           fi
 
       - name: Clone and build kernel
