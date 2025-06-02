@@ -237,7 +237,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Component Release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/use-prebuilt-binaries'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: components-$(date +%Y%m%d-%H%M%S)
