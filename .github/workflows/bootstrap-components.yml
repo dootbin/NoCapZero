@@ -1,0 +1,171 @@
+name: Bootstrap Prebuilt Components
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag for components (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  ARCH: arm64
+  CROSS_COMPILE: aarch64-linux-gnu-
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            device-tree-compiler \
+            u-boot-tools \
+            bison \
+            flex \
+            libssl-dev \
+            libgnutls28-dev \
+            bc \
+            kmod \
+            cpio \
+            rsync \
+            wget \
+            curl \
+            xz-utils
+
+      - name: Build all components
+        run: |
+          mkdir -p artifacts
+          
+          # Build ARM Trusted Firmware
+          echo "Building ARM Trusted Firmware..."
+          cd $HOME
+          ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags\///')
+          git clone --depth 1 -b "$ATF_TAG" https://github.com/ARM-software/arm-trusted-firmware.git
+          cd arm-trusted-firmware
+          make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
+          
+          # Build U-Boot
+          echo "Building U-Boot..."
+          cd $HOME
+          UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags\///')
+          git clone --depth 1 -b "$UBOOT_TAG" https://github.com/u-boot/u-boot.git
+          cd u-boot
+          cp $HOME/arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
+          make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
+          make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin -j$(nproc)
+          cp u-boot-sunxi-with-spl.bin ${{ github.workspace }}/artifacts/
+          
+          # Build Kernel
+          echo "Building Kernel..."
+          cd $HOME
+          git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
+            https://github.com/orangepi-xunlong/linux-orangepi.git kernel
+          cd kernel
+          
+          # Apply patches if any
+          for patch in ${{ github.workspace }}/patches/kernel/*.patch; do
+            [ -f "$patch" ] && git apply "$patch"
+          done
+          
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
+          ./scripts/config --enable CONFIG_ARCH_SUNXI
+          ./scripts/config --enable CONFIG_MACH_SUN50I
+          ./scripts/config --enable CONFIG_USB_GADGET
+          ./scripts/config --enable CONFIG_USB_CONFIGFS
+          ./scripts/config --enable CONFIG_USB_ETH
+          ./scripts/config --enable CONFIG_USB_MASS_STORAGE
+          ./scripts/config --enable CONFIG_USB_G_SERIAL
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+          
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
+          
+          cp arch/arm64/boot/Image ${{ github.workspace }}/artifacts/
+          if [ -f arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ]; then
+            cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ${{ github.workspace }}/artifacts/
+          else
+            DTB_FILE=$(find arch/arm64/boot/dts -name "*orangepi*zero2w*.dtb" -o -name "*h618*.dtb" | head -1)
+            if [ -n "$DTB_FILE" ]; then
+              cp "$DTB_FILE" ${{ github.workspace }}/artifacts/sun50i-h618-orangepi-zero2w.dtb
+            fi
+          fi
+          
+          # Install modules
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=$HOME/modules_install modules_install
+          cd $HOME
+          tar -czf ${{ github.workspace }}/artifacts/modules.tar.gz -C modules_install .
+          
+          # Download Mali driver
+          wget -O ${{ github.workspace }}/artifacts/libmali.so \
+            https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
+
+      - name: Generate metadata
+        run: |
+          cd artifacts
+          cat > metadata.json << EOF
+          {
+            "build_date": "$(date -u +"%Y-%m-%d %H:%M:%S UTC")",
+            "tag": "${{ github.event.inputs.release_tag }}",
+            "atf_version": "$ATF_TAG",
+            "uboot_version": "$UBOOT_TAG",
+            "kernel_version": "orange-pi-6.1-sun50iw9"
+          }
+          EOF
+          
+          # Generate checksums
+          sha256sum * > SHA256SUMS
+          
+          # List all files
+          ls -la
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: Prebuilt Components ${{ github.event.inputs.release_tag }}
+          body: |
+            ## Prebuilt Components for Orange Pi Zero 2W
+            
+            This release contains prebuilt binaries to speed up CI/CD builds.
+            
+            ### Components:
+            - **U-Boot**: Latest stable with SPL
+            - **Kernel**: Orange Pi 6.1-sun50iw9 branch
+            - **DTB**: Device tree for Orange Pi Zero 2W
+            - **Modules**: Kernel modules archive
+            - **Mali Driver**: GPU driver for Mali-G31
+            
+            ### Usage:
+            These components are automatically used by the main build workflow.
+            
+            Built on: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create components-latest tag
+        run: |
+          # Update or create components-latest tag
+          git tag -f components-latest
+          git push origin components-latest --force

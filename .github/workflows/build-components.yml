@@ -231,28 +231,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload to GitHub Releases (latest)
+      - name: Create Component Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: components-latest
-          prerelease: true
+          tag_name: components-$(date +%Y%m%d-%H%M%S)
+          name: Components Build $(date +%Y-%m-%d)
           files: artifacts/*
           body: |
-            Latest pre-built components for Orange Pi Zero 2W
-            
-            ⚠️ **This is an automated build from the main branch**
+            ## Pre-built Components for Orange Pi Zero 2W
             
             Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
             Git Commit: ${{ github.sha }}
             
-            ## Download URLs
-            Use these URLs in the simplified build workflow:
-            ```yaml
-            UBOOT_URL: https://github.com/${{ github.repository }}/releases/download/components-latest/u-boot-sunxi-with-spl.bin
-            KERNEL_URL: https://github.com/${{ github.repository }}/releases/download/components-latest/Image
-            DTB_URL: https://github.com/${{ github.repository }}/releases/download/components-latest/sun50i-h618-orangepi-zero2w.dtb
-            MODULES_URL: https://github.com/${{ github.repository }}/releases/download/components-latest/modules.tar.gz
-            ```
+            ### Components:
+            - U-Boot with SPL
+            - Linux kernel Image  
+            - Device tree blob
+            - Kernel modules
+            - Mali GPU driver
+            
+            ### To use these components:
+            Update `COMPONENTS_VERSION` in `.github/workflows/build.yml` to this release tag.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
