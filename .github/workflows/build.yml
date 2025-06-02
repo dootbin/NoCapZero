@@ -139,6 +139,8 @@ jobs:
               [ -f "$patch" ] && git apply "$patch"
             done
             
+            # U-Boot needs ARCH=arm even for ARM64
+            unset ARCH
             make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
             make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
           fi
