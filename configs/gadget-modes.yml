@@ -1,0 +1,23 @@
+modes:
+  storage:
+    description: "USB Mass Storage Mode"
+    modules:
+      - g_mass_storage
+    options:
+      - stall=0
+      - removable=1
+      
+  network:
+    description: "USB Ethernet Mode"
+    modules:
+      - g_ether
+    options:
+      - dev_addr=00:22:82:ff:ff:01
+      - host_addr=00:22:82:ff:ff:02
+      
+  serial:
+    description: "USB Serial Console Mode"
+    modules:
+      - g_serial
+    options:
+      - use_acm=0

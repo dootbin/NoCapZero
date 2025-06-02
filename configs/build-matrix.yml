@@ -1,0 +1,34 @@
+variants:
+  runtime:
+    packages: configs/packages/runtime.list
+    size_limit: 200MB
+    features:
+      - gpu_acceleration
+      - video_decode
+      - usb_gadget
+      - static_binary_support
+  
+  development:
+    packages: configs/packages/development.list
+    size_limit: 600MB
+    features:
+      - gpu_acceleration
+      - video_decode
+      - usb_gadget
+      - development_tools
+      - cross_compilation
+      - gtk4
+      - webkit
+
+  debug:
+    packages: configs/packages/debug.list
+    size_limit: 800MB
+    features:
+      - gpu_acceleration
+      - video_decode
+      - usb_gadget
+      - development_tools
+      - debug_symbols
+      - profiling_tools
+      - gtk4
+      - webkit
