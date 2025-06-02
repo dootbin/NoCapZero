@@ -129,6 +129,19 @@ jobs:
               http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
           fi
 
+      - name: Build ARM Trusted Firmware
+        run: |
+          if [ ! -f /tmp/build-cache/bl31.bin ]; then
+            git clone --depth 1 -b v2.10.0 \
+              https://github.com/ARM-software/arm-trusted-firmware.git \
+              /tmp/build-cache/arm-trusted-firmware
+            cd /tmp/build-cache/arm-trusted-firmware
+            
+            # Build for Allwinner H616/H618
+            make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
+            cp build/sun50i_h616/release/bl31.bin /tmp/build-cache/
+          fi
+
       - name: Clone and build U-Boot
         run: |
           if [ ! -d /tmp/build-cache/u-boot ]; then
@@ -142,9 +155,12 @@ jobs:
               [ -f "$patch" ] && git apply "$patch"
             done
             
+            # Copy BL31 to U-Boot directory
+            cp /tmp/build-cache/bl31.bin .
+            
             # Build with aarch64 compiler for mainline U-Boot
             make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
+            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin -j$(nproc)
           fi
 
       - name: Clone and build kernel
