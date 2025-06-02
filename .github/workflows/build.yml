@@ -20,15 +20,15 @@ on:
 
 env:
   DEBIAN_FRONTEND: noninteractive
-  ARCH: arm64
-  CROSS_COMPILE: aarch64-linux-gnu-
+  # Pre-built component URLs from our components workflow
+  COMPONENTS_RELEASE: components-latest
+  MALI_DRIVER_URL: https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
 
 jobs:
   setup:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
-      cache-key: ${{ steps.cache-key.outputs.key }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,12 +43,6 @@ jobs:
           fi
           echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
 
-      - name: Generate cache key
-        id: cache-key
-        run: |
-          KEY="orangepi-zero2w-$(date +'%Y%m%d')-$(sha256sum configs/* | sha256sum | cut -d' ' -f1 | head -c8)"
-          echo "key=${KEY}" >> $GITHUB_OUTPUT
-
   build:
     needs: setup
     runs-on: ubuntu-22.04
@@ -58,50 +52,13 @@ jobs:
       fail-fast: false
     
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 4096
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Cache build dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            /tmp/build-cache
-            /tmp/toolchain
-          key: ${{ needs.setup.outputs.cache-key }}-${{ matrix.variant }}
-          restore-keys: |
-            ${{ needs.setup.outputs.cache-key }}-
-            orangepi-zero2w-
-
-      - name: Install build dependencies
+      - name: Install required packages
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            device-tree-compiler \
-            u-boot-tools \
-            bison \
-            flex \
-            libssl-dev \
-            libgnutls28-dev \
-            libuuid1 \
-            uuid-dev \
-            bc \
-            kmod \
-            cpio \
-            rsync \
             wget \
             curl \
             xz-utils \
@@ -112,105 +69,58 @@ jobs:
             dosfstools \
             e2fsprogs \
             pixz \
-            p7zip-full
+            rsync \
+            device-tree-compiler
 
-      - name: Setup cross-compilation environment
+      - name: Download pre-built U-Boot
         run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          mkdir -p /tmp/downloads
+          wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/u-boot-sunxi-with-spl.bin
+
+      - name: Download pre-built kernel and modules
+        run: |
+          # Download pre-built kernel image
+          wget -O /tmp/downloads/Image \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/Image
+          
+          # Download pre-built DTB
+          wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/sun50i-h618-orangepi-zero2w.dtb
+          
+          # Download kernel modules tarball
+          wget -O /tmp/downloads/modules.tar.gz \
+            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_RELEASE }}/modules.tar.gz
+          
+          # Extract modules
+          mkdir -p /tmp
+          tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+
+      - name: Download Mali GPU driver
+        run: |
+          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL"
 
       - name: Download Arch Linux ARM base
         run: |
-          mkdir -p /tmp/build-cache
-          if [ ! -f /tmp/build-cache/ArchLinuxARM-aarch64-latest.tar.gz ]; then
-            wget -O /tmp/build-cache/ArchLinuxARM-aarch64-latest.tar.gz \
-              http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
-          fi
-
-      - name: Build ARM Trusted Firmware
-        run: |
-          if [ ! -f /tmp/build-cache/bl31.bin ]; then
-            git clone --depth 1 -b v2.10.0 \
-              https://github.com/ARM-software/arm-trusted-firmware.git \
-              /tmp/build-cache/arm-trusted-firmware
-            cd /tmp/build-cache/arm-trusted-firmware
-            
-            # Build for Allwinner H616/H618
-            make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
-            cp build/sun50i_h616/release/bl31.bin /tmp/build-cache/
-          fi
-
-      - name: Clone and build U-Boot
-        run: |
-          if [ ! -d /tmp/build-cache/u-boot ]; then
-            git clone --depth 1 -b v2025.01 \
-              https://github.com/u-boot/u-boot.git \
-              /tmp/build-cache/u-boot
-            cd /tmp/build-cache/u-boot
-            
-            # Apply patches if any
-            for patch in ${{ github.workspace }}/patches/uboot/*.patch; do
-              [ -f "$patch" ] && git apply "$patch"
-            done
-            
-            # Copy BL31 to U-Boot directory
-            cp /tmp/build-cache/bl31.bin .
-            
-            # Build with aarch64 compiler for mainline U-Boot
-            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin -j$(nproc)
-          fi
-
-      - name: Clone and build kernel
-        run: |
-          if [ ! -d /tmp/build-cache/kernel ]; then
-            git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
-              https://github.com/orangepi-xunlong/linux-orangepi.git \
-              /tmp/build-cache/kernel
-            cd /tmp/build-cache/kernel
-            
-            # Apply custom patches
-            for patch in ${{ github.workspace }}/patches/kernel/*.patch; do
-              [ -f "$patch" ] && git apply "$patch"
-            done
-            
-            # Use default config for now
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
-            # Enable required options
-            ./scripts/config --enable CONFIG_ARCH_SUNXI
-            ./scripts/config --enable CONFIG_MACH_SUN50I
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules modules_install
-          fi
-
-      - name: Download Mali GPU drivers
-        run: |
-          mkdir -p /tmp/build-cache/mali
-          if [ ! -f /tmp/build-cache/mali/libmali.so ]; then
-            # Download Mali-G31 drivers for Orange Pi Zero 2W
-            wget -O /tmp/build-cache/mali/libmali.so \
-              https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
-          fi
+          wget -O /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
+            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
 
       - name: Create root filesystem
         run: |
           ./scripts/create-rootfs.sh \
             --variant ${{ matrix.variant }} \
-            --arch-tarball /tmp/build-cache/ArchLinuxARM-aarch64-latest.tar.gz \
+            --arch-tarball /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
             --kernel-modules /tmp/modules \
-            --mali-driver /tmp/build-cache/mali/libmali.so \
+            --mali-driver /tmp/downloads/libmali.so \
             --output /tmp/rootfs-${{ matrix.variant }}
 
       - name: Build SD card image
         run: |
           ./scripts/create-image.sh \
             --rootfs /tmp/rootfs-${{ matrix.variant }} \
-            --uboot /tmp/build-cache/u-boot/u-boot-sunxi-with-spl.bin \
-            --kernel /tmp/build-cache/kernel/arch/arm64/boot/Image \
-            --dtb /tmp/build-cache/kernel/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb \
+            --uboot /tmp/downloads/u-boot-sunxi-with-spl.bin \
+            --kernel /tmp/downloads/Image \
+            --dtb /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
             --variant ${{ matrix.variant }} \
             --output orangepi-zero2w-${{ matrix.variant }}.img
 
@@ -226,8 +136,7 @@ jobs:
           Variant: ${{ matrix.variant }}
           Git Commit: ${{ github.sha }}
           Git Ref: ${{ github.ref }}
-          Kernel Version: $(cd /tmp/build-cache/kernel && make kernelversion)
-          U-Boot Version: $(cd /tmp/build-cache/u-boot && make version)
+          Pre-built Components: U-Boot, Kernel, DTB
           Image Size: $(stat -c%s orangepi-zero2w-${{ matrix.variant }}.img.xz) bytes
           EOF
 
@@ -252,13 +161,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  test:
-    needs: [setup, build]
+  validate:
+    needs: build
     runs-on: ubuntu-22.04
     if: github.event_name == 'pull_request'
     strategy:
       matrix:
-        variant: ${{ fromJson(needs.setup.outputs.matrix) }}
+        variant: ["runtime", "development", "debug"]
     
     steps:
       - name: Checkout repository
@@ -269,33 +178,7 @@ jobs:
         with:
           name: orangepi-zero2w-${{ matrix.variant }}
 
-      - name: Install QEMU
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-aarch64 qemu-utils
-
-      - name: Test image boot (QEMU)
-        run: |
-          # Extract image
-          xz -d orangepi-zero2w-${{ matrix.variant }}.img.xz
-          
-          # Convert to qcow2 for QEMU
-          qemu-img convert -f raw -O qcow2 \
-            orangepi-zero2w-${{ matrix.variant }}.img \
-            test-${{ matrix.variant }}.qcow2
-          
-          # Basic boot test (timeout after 60 seconds)
-          timeout 60 qemu-system-aarch64 \
-            -M virt \
-            -cpu cortex-a53 \
-            -m 1024 \
-            -nographic \
-            -drive file=test-${{ matrix.variant }}.qcow2,format=qcow2 \
-            -netdev user,id=net0 \
-            -device virtio-net-device,netdev=net0 \
-            -serial mon:stdio \
-            || true
-
       - name: Validate image structure
         run: |
+          xz -d orangepi-zero2w-${{ matrix.variant }}.img.xz
           ./scripts/validate-image.sh orangepi-zero2w-${{ matrix.variant }}.img

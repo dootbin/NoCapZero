@@ -11,16 +11,9 @@ on:
         required: true
         type: string
 
-env:
-  DEBIAN_FRONTEND: noninteractive
-
 jobs:
-  create-release:
+  build-release:
     runs-on: ubuntu-22.04
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      release_id: ${{ steps.create_release.outputs.id }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,278 +29,95 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Trigger build for all variants
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.get_tag.outputs.tag }}';
+            
+            // Trigger build workflow
+            const workflow = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yml',
+              ref: tag,
+              inputs: {
+                build_variant: 'all'
+              }
+            });
+            
+            console.log('Build workflow triggered for tag:', tag);
+
       - name: Generate release notes
         id: release_notes
         run: |
           # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          TAG="${{ steps.get_tag.outputs.tag }}"
           
           # Generate changelog
-          if [ -n "$PREV_TAG" ]; then
-            echo "## Changes since $PREV_TAG" > release_notes.md
-            echo "" >> release_notes.md
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> release_notes.md
-          else
-            echo "## Initial Release" > release_notes.md
-            echo "" >> release_notes.md
-            echo "First automated build of Orange Pi Zero 2W minimal images." >> release_notes.md
-          fi
-          
-          echo "" >> release_notes.md
-          echo "## Image Variants" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "| Variant | Size | Description |" >> release_notes.md
-          echo "|---------|------|-------------|" >> release_notes.md
-          echo "| Runtime | ~200MB | Minimal system for deploying static binaries |" >> release_notes.md
-          echo "| Development | ~600MB | Includes on-device development tools |" >> release_notes.md
-          echo "| Debug | ~800MB | Development edition with debug symbols |" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Hardware Support" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "- ✅ Orange Pi Zero 2W (all RAM variants)" >> release_notes.md
-          echo "- ✅ Mali-G31 GPU acceleration" >> release_notes.md
-          echo "- ✅ H.264/H.265 hardware decode" >> release_notes.md
-          echo "- ✅ USB gadget modes (storage/network/serial)" >> release_notes.md
-          echo "- ✅ WiFi 5 and Bluetooth 5.0" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "# Download and flash runtime edition" >> release_notes.md
-          echo "wget https://github.com/${{ github.repository }}/releases/download/${{ steps.get_tag.outputs.tag }}/orangepi-zero2w-runtime.img.xz" >> release_notes.md
-          echo "xz -d orangepi-zero2w-runtime.img.xz" >> release_notes.md
-          echo "sudo dd if=orangepi-zero2w-runtime.img of=/dev/sdX bs=4M status=progress" >> release_notes.md
-          echo '```' >> release_notes.md
+          {
+            echo "# Orange Pi Zero 2W Release $TAG"
+            echo ""
+            echo "## 🚀 Features"
+            echo ""
+            echo "- Pre-built images for Orange Pi Zero 2W"
+            echo "- Hardware-accelerated graphics (Mali-G31 GPU)"
+            echo "- USB gadget support (mass storage, networking, serial)"
+            echo "- Minimal footprint (~200MB runtime edition)"
+            echo ""
+            
+            if [ -n "$PREV_TAG" ]; then
+              echo "## 📋 Changes since $PREV_TAG"
+              echo ""
+              git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD
+              echo ""
+            fi
+            
+            echo ""
+            echo "## 📦 Available Variants"
+            echo ""
+            echo "- **Runtime Edition**: Minimal system for production (~200MB)"
+            echo "- **Development Edition**: Includes development tools (~600MB)"
+            echo "- **Debug Edition**: Development + debug symbols (~800MB)"
+            echo ""
+            echo "## 🔧 Build Information"
+            echo ""
+            echo "- Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "- Components: Prebuilt from components-latest"
+            echo "- Base OS: Arch Linux ARM"
+            echo "- Kernel: Orange Pi 6.1-sun50iw9"
+            echo "- U-Boot: v2025.01"
+            echo ""
+            echo "## 📥 Installation"
+            echo ""
+            echo '```bash'
+            echo "# Download and extract"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/$TAG/orangepi-zero2w-runtime.img.xz"
+            echo "xz -d orangepi-zero2w-runtime.img.xz"
+            echo ""
+            echo "# Flash to SD card"
+            echo "sudo dd if=orangepi-zero2w-runtime.img of=/dev/sdX bs=4M status=progress"
+            echo "sync"
+            echo '```'
+            echo ""
+            echo "Default credentials: root / orangepi"
+          } > release_notes.md
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
-          release_name: Orange Pi Zero 2W Images ${{ steps.get_tag.outputs.tag }}
+          name: Orange Pi Zero 2W ${{ steps.get_tag.outputs.tag }}
           body_path: release_notes.md
           draft: true
           prerelease: false
-
-  build-release:
-    needs: create-release
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        variant: [runtime, development, debug]
-    
-    steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 4096
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            device-tree-compiler \
-            u-boot-tools \
-            bison \
-            flex \
-            libssl-dev \
-            bc \
-            kmod \
-            cpio \
-            rsync \
-            wget \
-            curl \
-            xz-utils \
-            qemu-user-static \
-            binfmt-support \
-            debootstrap \
-            parted \
-            dosfstools \
-            e2fsprogs \
-            pixz \
-            p7zip-full
-
-      - name: Setup cross-compilation environment
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-
-      - name: Build complete system
-        run: |
-          # Download sources
-          mkdir -p /tmp/sources
-          wget -O /tmp/sources/ArchLinuxARM-aarch64-latest.tar.gz \
-            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
-
-          # Build U-Boot
-          git clone --depth 1 -b v2023.07 \
-            https://github.com/orangepi-xunlong/u-boot-orangepi.git \
-            /tmp/u-boot
-          cd /tmp/u-boot
-          for patch in ${{ github.workspace }}/patches/uboot/*.patch; do
-            [ -f "$patch" ] && git apply "$patch"
-          done
-          make CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-          make CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
-
-          # Build kernel
-          git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
-            https://github.com/orangepi-xunlong/linux-orangepi.git \
-            /tmp/kernel
-          cd /tmp/kernel
-          for patch in ${{ github.workspace }}/patches/kernel/*.patch; do
-            [ -f "$patch" ] && git apply "$patch"
-          done
-          cp ${{ github.workspace }}/configs/kernel-config .config
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules modules_install
-
-          # Download Mali drivers
-          mkdir -p /tmp/mali
-          wget -O /tmp/mali/libmali.so \
-            https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
-
-          # Create rootfs
-          ./scripts/create-rootfs.sh \
-            --variant ${{ matrix.variant }} \
-            --arch-tarball /tmp/sources/ArchLinuxARM-aarch64-latest.tar.gz \
-            --kernel-modules /tmp/modules \
-            --mali-driver /tmp/mali/libmali.so \
-            --output /tmp/rootfs-${{ matrix.variant }}
-
-          # Build image
-          ./scripts/create-image.sh \
-            --rootfs /tmp/rootfs-${{ matrix.variant }} \
-            --uboot /tmp/u-boot/u-boot-sunxi-with-spl.bin \
-            --kernel /tmp/kernel/arch/arm64/boot/Image \
-            --dtb /tmp/kernel/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb \
-            --variant ${{ matrix.variant }} \
-            --output orangepi-zero2w-${{ matrix.variant }}.img
-
-      - name: Compress and checksum
-        run: |
-          # Compress image
-          pixz -9 orangepi-zero2w-${{ matrix.variant }}.img
-          
-          # Generate checksums
-          sha256sum orangepi-zero2w-${{ matrix.variant }}.img.xz > orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-          md5sum orangepi-zero2w-${{ matrix.variant }}.img.xz > orangepi-zero2w-${{ matrix.variant }}.img.xz.md5
-
-          # Generate build info
-          cat > orangepi-zero2w-${{ matrix.variant }}.info << EOF
-          Orange Pi Zero 2W - ${{ matrix.variant }} Edition
-          ================================================
-          
-          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Git Commit: ${{ github.sha }}
-          Git Tag: ${GITHUB_REF#refs/tags/}
-          Kernel Version: $(cd /tmp/kernel && make kernelversion)
-          U-Boot Version: $(cd /tmp/u-boot && make version)
-          
-          Image Details:
-          - Compressed Size: $(stat -c%s orangepi-zero2w-${{ matrix.variant }}.img.xz) bytes
-          - SHA256: $(cat orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256 | cut -d' ' -f1)
-          
-          Hardware Support:
-          - Orange Pi Zero 2W (all RAM variants)
-          - Allwinner H618 SoC
-          - Mali-G31 MP2 GPU with hardware acceleration
-          - H.264/H.265 hardware video decode
-          - WiFi 5 and Bluetooth 5.0
-          - USB gadget modes (storage/network/serial)
-          
-          Installation:
-          1. Download the .img.xz file
-          2. Verify checksum: sha256sum -c orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-          3. Extract: xz -d orangepi-zero2w-${{ matrix.variant }}.img.xz
-          4. Flash: sudo dd if=orangepi-zero2w-${{ matrix.variant }}.img of=/dev/sdX bs=4M status=progress
-          5. Insert SD card into Orange Pi Zero 2W and boot
-          
-          Default Credentials:
-          - Username: root
-          - Password: orangepi
-          
-          First Boot:
-          - Boot time: ~20 seconds
-          - Resize root partition automatically
-          - Enable SSH on first boot
-          - Default IP: DHCP (check router for assigned IP)
-          
-          EOF
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./orangepi-zero2w-${{ matrix.variant }}.img.xz
-          asset_name: orangepi-zero2w-${{ matrix.variant }}.img.xz
-          asset_content_type: application/octet-stream
 
-      - name: Upload SHA256 Checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-          asset_name: orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-          asset_content_type: text/plain
-
-      - name: Upload Build Info
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./orangepi-zero2w-${{ matrix.variant }}.info
-          asset_name: orangepi-zero2w-${{ matrix.variant }}.info
-          asset_content_type: text/plain
-
-  publish-release:
-    needs: [create-release, build-release]
-    runs-on: ubuntu-22.04
-    
-    steps:
-      - name: Publish Release
-        uses: eregon/publish-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          release_id: ${{ needs.create-release.outputs.release_id }}
-
-      - name: Update README badges
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Update latest release info
+      - name: Note about release process
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          sed -i "s|releases/latest/download|releases/download/${TAG}|g" README.md
-          
-      - name: Commit README updates
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add README.md
-          git diff --staged --quiet || git commit -m "Update README with release ${TAG} links"
-          git push
+          echo "Release created as draft. The build workflow will upload artifacts."
+          echo "Once artifacts are uploaded, manually publish the release."
+          echo ""
+          echo "This new process uses prebuilt components for faster, more reliable releases."

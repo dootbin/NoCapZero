@@ -6,131 +6,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  trigger-build:
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        variant: [runtime]
-    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Trigger main build workflow
+        uses: actions/github-script@v7
         with:
-          submodules: recursive
-
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 4096
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
-      - name: Install build dependencies
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yml',
+              ref: 'main',
+              inputs: {
+                build_variant: 'runtime'
+              }
+            })
+            
+      - name: Note about nightly builds
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            device-tree-compiler \
-            u-boot-tools \
-            bison \
-            flex \
-            libssl-dev \
-            bc \
-            kmod \
-            cpio \
-            rsync \
-            wget \
-            curl \
-            xz-utils \
-            qemu-user-static \
-            binfmt-support \
-            debootstrap \
-            parted \
-            dosfstools \
-            e2fsprogs \
-            pixz
-
-      - name: Setup cross-compilation environment
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-
-      - name: Build complete system
-        run: |
-          # Download sources
-          mkdir -p /tmp/sources
-          wget -O /tmp/sources/ArchLinuxARM-aarch64-latest.tar.gz \
-            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
-
-          # Build U-Boot
-          git clone --depth 1 -b v2023.07 \
-            https://github.com/orangepi-xunlong/u-boot-orangepi.git \
-            /tmp/u-boot
-          cd /tmp/u-boot
-          for patch in ${{ github.workspace }}/patches/uboot/*.patch; do
-            [ -f "$patch" ] && git apply "$patch"
-          done
-          make CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-          make CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
-
-          # Build kernel
-          git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
-            https://github.com/orangepi-xunlong/linux-orangepi.git \
-            /tmp/kernel
-          cd /tmp/kernel
-          for patch in ${{ github.workspace }}/patches/kernel/*.patch; do
-            [ -f "$patch" ] && git apply "$patch"
-          done
-          cp ${{ github.workspace }}/configs/kernel-config .config
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules modules_install
-
-          # Download Mali drivers
-          mkdir -p /tmp/mali
-          wget -O /tmp/mali/libmali.so \
-            https://github.com/JeffyCN/mirrors/raw/libmali/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so
-
-          # Create rootfs
-          ./scripts/create-rootfs.sh \
-            --variant ${{ matrix.variant }} \
-            --arch-tarball /tmp/sources/ArchLinuxARM-aarch64-latest.tar.gz \
-            --kernel-modules /tmp/modules \
-            --mali-driver /tmp/mali/libmali.so \
-            --output /tmp/rootfs-${{ matrix.variant }}
-
-          # Build image
-          ./scripts/create-image.sh \
-            --rootfs /tmp/rootfs-${{ matrix.variant }} \
-            --uboot /tmp/u-boot/u-boot-sunxi-with-spl.bin \
-            --kernel /tmp/kernel/arch/arm64/boot/Image \
-            --dtb /tmp/kernel/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb \
-            --variant ${{ matrix.variant }} \
-            --output orangepi-zero2w-${{ matrix.variant }}-nightly.img
-
-      - name: Compress and checksum
-        run: |
-          # Add date to filename
-          DATE=$(date +%Y%m%d)
-          mv orangepi-zero2w-${{ matrix.variant }}-nightly.img orangepi-zero2w-${{ matrix.variant }}-$DATE.img
-          
-          # Compress image
-          pixz -9 orangepi-zero2w-${{ matrix.variant }}-$DATE.img
-          
-          # Generate checksums
-          sha256sum orangepi-zero2w-${{ matrix.variant }}-$DATE.img.xz > orangepi-zero2w-${{ matrix.variant }}-$DATE.img.xz.sha256
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangepi-zero2w-${{ matrix.variant }}-nightly
-          path: |
-            orangepi-zero2w-${{ matrix.variant }}-*.img.xz
-            orangepi-zero2w-${{ matrix.variant }}-*.img.xz.sha256
-          retention-days: 7
+          echo "Nightly builds now use prebuilt components from components-latest release"
+          echo "This ensures consistent and fast builds every night"
+          echo "Components are rebuilt weekly or when patches are updated"
