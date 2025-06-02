@@ -95,6 +95,9 @@ jobs:
             bison \
             flex \
             libssl-dev \
+            libgnutls28-dev \
+            libuuid1 \
+            uuid-dev \
             bc \
             kmod \
             cpio \
