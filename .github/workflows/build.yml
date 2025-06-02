@@ -19,11 +19,13 @@ on:
         - development
         - debug
         - all
+      components_tag:
+        description: 'Components release tag (optional, e.g. components-abc123)'
+        required: false
+        type: string
 
 env:
   DEBIAN_FRONTEND: noninteractive
-  # Pre-built components use the 'components-latest' release tag
-  COMPONENTS_TAG: components-latest
   MALI_DRIVER_URL: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
 jobs:
@@ -31,6 +33,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
+      components_tag: ${{ steps.find-components.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,6 +47,55 @@ jobs:
             MATRIX='["${{ github.event.inputs.build_variant }}"]'
           fi
           echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+      
+      - name: Find latest components release
+        id: find-components
+        run: |
+          # Check if user provided a specific components tag
+          if [ -n "${{ github.event.inputs.components_tag }}" ]; then
+            COMPONENT_TAG="${{ github.event.inputs.components_tag }}"
+            if gh release view "$COMPONENT_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Using user-specified components tag: $COMPONENT_TAG"
+              echo "tag=$COMPONENT_TAG" >> $GITHUB_OUTPUT
+            else
+              echo "ERROR: User-specified tag '$COMPONENT_TAG' not found"
+              exit 1
+            fi
+          # If triggered by workflow_run, use the commit SHA from the triggering workflow
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "Using commit SHA from triggering workflow: $COMMIT_SHA"
+            # First try the exact commit tag
+            COMPONENT_TAG="components-${COMMIT_SHA}"
+            if gh release view "$COMPONENT_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Found exact match release: $COMPONENT_TAG"
+              echo "tag=$COMPONENT_TAG" >> $GITHUB_OUTPUT
+            else
+              # If no exact match, find the most recent components release
+              echo "No exact match found, searching for most recent components release..."
+              LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
+              if [ -n "$LATEST_TAG" ]; then
+                echo "Found latest components release: $LATEST_TAG"
+                echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+              else
+                echo "No components releases found, build will fall back to building from source"
+                echo "tag=" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            # For other triggers, find the most recent components release
+            echo "Searching for most recent components release..."
+            LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
+            if [ -n "$LATEST_TAG" ]; then
+              echo "Found latest components release: $LATEST_TAG"
+              echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+            else
+              echo "No components releases found, build will fall back to building from source"
+              echo "tag=" >> $GITHUB_OUTPUT
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build:
     needs: setup
@@ -81,19 +133,32 @@ jobs:
         run: |
           mkdir -p /tmp/downloads
           
-          # Try to download from our components-latest release
-          if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
-            echo "success=true" >> $GITHUB_OUTPUT
-            echo "Downloaded U-Boot from release ${{ env.COMPONENTS_TAG }}"
-          # Try alternative source from GitHub Doct2O repository (H618 specific)
-          elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
-            echo "success=true" >> $GITHUB_OUTPUT
-            echo "Downloaded U-Boot from Doct2O repository"
+          # Check if we have a components tag
+          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
+            # Try to download from our components release
+            if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+              echo "success=true" >> $GITHUB_OUTPUT
+              echo "Downloaded U-Boot from release ${{ needs.setup.outputs.components_tag }}"
+            # Try alternative source from GitHub Doct2O repository (H618 specific)
+            elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+              https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+              echo "success=true" >> $GITHUB_OUTPUT
+              echo "Downloaded U-Boot from Doct2O repository"
+            else
+              echo "success=false" >> $GITHUB_OUTPUT
+              echo "WARNING: Failed to download prebuilt U-Boot from all sources"
+            fi
           else
-            echo "success=false" >> $GITHUB_OUTPUT
-            echo "WARNING: Failed to download prebuilt U-Boot from all sources"
+            # No components tag, try fallback source
+            if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
+              https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
+              echo "success=true" >> $GITHUB_OUTPUT
+              echo "Downloaded U-Boot from Doct2O repository"
+            else
+              echo "success=false" >> $GITHUB_OUTPUT
+              echo "WARNING: Failed to download prebuilt U-Boot from all sources"
+            fi
           fi
 
       - name: Download pre-built kernel and modules
@@ -101,47 +166,66 @@ jobs:
         run: |
           SUCCESS=true
           
-          # Download pre-built kernel image
-          if wget -O /tmp/downloads/Image \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/Image 2>/dev/null; then
-            echo "Downloaded prebuilt kernel from release ${{ env.COMPONENTS_TAG }}"
-          else
-            echo "WARNING: Failed to download prebuilt kernel"
-            SUCCESS=false
-          fi
-          
-          # Download pre-built DTB
-          if wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
-            echo "Downloaded prebuilt DTB from release ${{ env.COMPONENTS_TAG }}"
-          else
-            echo "WARNING: Failed to download prebuilt DTB"
-            SUCCESS=false
-          fi
-          
-          # Download kernel modules tarball
-          if wget -O /tmp/downloads/modules.tar.gz \
-            https://github.com/${{ github.repository }}/releases/download/${{ env.COMPONENTS_TAG }}/modules.tar.gz 2>/dev/null; then
-            echo "Downloaded prebuilt modules from release ${{ env.COMPONENTS_TAG }}"
-          else
-            echo "WARNING: Failed to download prebuilt modules"
-            SUCCESS=false
-          fi
-          
-          # Extract modules if download succeeded
-          if [ -f /tmp/downloads/modules.tar.gz ]; then
-            mkdir -p /tmp
-            if tar -tzf /tmp/downloads/modules.tar.gz >/dev/null 2>&1; then
-              tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+          # Check if we have a components tag
+          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
+            # Download pre-built kernel image
+            if wget -O /tmp/downloads/Image \
+              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/Image 2>/dev/null; then
+              echo "Downloaded prebuilt kernel from release ${{ needs.setup.outputs.components_tag }}"
             else
-              echo "WARNING: modules.tar.gz is corrupted or empty"
-              rm -f /tmp/downloads/modules.tar.gz
+              echo "WARNING: Failed to download prebuilt kernel"
               SUCCESS=false
             fi
+            
+            # Download pre-built DTB
+            if wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
+              echo "Downloaded prebuilt DTB from release ${{ needs.setup.outputs.components_tag }}"
+            else
+              echo "WARNING: Failed to download prebuilt DTB"
+              SUCCESS=false
+            fi
+            
+            # Download kernel modules tarball
+            if wget -O /tmp/downloads/modules.tar.gz \
+              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/modules.tar.gz 2>/dev/null; then
+              echo "Downloaded prebuilt modules from release ${{ needs.setup.outputs.components_tag }}"
+            else
+              echo "WARNING: Failed to download prebuilt modules"
+              SUCCESS=false
+            fi
+            
+            # Extract modules if download succeeded
+            if [ -f /tmp/downloads/modules.tar.gz ]; then
+              mkdir -p /tmp
+              if tar -tzf /tmp/downloads/modules.tar.gz >/dev/null 2>&1; then
+                tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
+              else
+                echo "WARNING: modules.tar.gz is corrupted or empty"
+                rm -f /tmp/downloads/modules.tar.gz
+                SUCCESS=false
+              fi
+            fi
+          else
+            # No components tag available
+            echo "No components release available, will build from source"
+            SUCCESS=false
           fi
           
           echo "success=$SUCCESS" >> $GITHUB_OUTPUT
 
+      - name: Component download summary
+        run: |
+          echo "=== Component Download Summary ==="
+          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
+            echo "Components tag: ${{ needs.setup.outputs.components_tag }}"
+          else
+            echo "No components release tag found"
+          fi
+          echo "U-Boot download: ${{ steps.download_uboot.outputs.success }}"
+          echo "Kernel download: ${{ steps.download_kernel.outputs.success }}"
+          echo "================================="
+          
       - name: Download Mali GPU driver
         run: |
           wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL" || echo "WARNING: Failed to download Mali driver"

@@ -242,16 +242,18 @@ jobs:
 
       - name: Create Component Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/use-prebuilt-binaries'
+        id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: components-latest
-          name: Latest Components Build ($(date +'%Y-%m-%d %H:%M'))
+          tag_name: components-${{ github.sha }}
+          name: Components Build ${{ github.sha }} ($(date +'%Y-%m-%d %H:%M'))
           prerelease: false
           files: artifacts/*
           body: |
             ## Pre-built Components for Orange Pi Zero 2W
             
             Git Commit: ${{ github.sha }}
+            Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
             
             ### Components:
             - U-Boot with SPL
@@ -262,6 +264,12 @@ jobs:
             
             ### Usage:
             These components are automatically used by the image build workflow.
-            The `components-latest` tag always points to the most recent build.
+            This is a versioned release tied to commit ${{ github.sha }}.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Output component release tag
+        if: steps.create_release.outcome == 'success'
+        run: |
+          echo "COMPONENT_TAG=components-${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "Component release created with tag: components-${{ github.sha }}"
