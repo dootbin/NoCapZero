@@ -1,0 +1,6 @@
+# Extracted code for analysis (not part of project)
+/extracted-code/
+
+# Temporary files
+/tmp/
+*.tmp
