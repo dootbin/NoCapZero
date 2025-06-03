@@ -1,0 +1,111 @@
+name: GPU Driver CI
+
+on:
+  pull_request:
+    paths:
+      - 'drivers/gpu-h618/**'
+      - '.github/workflows/gpu-driver.yml'
+  push:
+    branches:
+      - main
+      - 'feature/mali-*'
+      - 'feature/gpu-*'
+    paths:
+      - 'drivers/gpu-h618/**'
+      - '.github/workflows/gpu-driver.yml'
+
+jobs:
+  syntax-check:
+    name: Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check GPU driver syntax
+        run: |
+          if [ -d "drivers/gpu-h618" ]; then
+            echo "Checking GPU driver syntax..."
+            cd drivers/gpu-h618
+            make check
+          else
+            echo "GPU driver not found, skipping syntax check"
+          fi
+
+  cross-compile:
+    name: ARM64 Cross Compilation
+    runs-on: ubuntu-latest
+    needs: syntax-check
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install ARM64 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          
+      - name: Verify toolchain
+        run: |
+          aarch64-linux-gnu-gcc --version
+          
+      - name: Build GPU driver for ARM64
+        run: |
+          if [ -d "drivers/gpu-h618" ]; then
+            echo "Building GPU driver for ARM64..."
+            cd drivers/gpu-h618
+            export CROSS_COMPILE=aarch64-linux-gnu-
+            make clean all
+          fi
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-driver-arm64
+          path: |
+            drivers/gpu-h618/*.a
+            drivers/gpu-h618/src/*.o
+          if-no-files-found: ignore
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    needs: syntax-check
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          
+      - name: Run cppcheck
+        run: |
+          if [ -d "drivers/gpu-h618" ]; then
+            cppcheck --enable=all --error-exitcode=1 \
+              --suppress=missingIncludeSystem \
+              --inline-suppr \
+              drivers/gpu-h618/src/*.c \
+              drivers/gpu-h618/include/*.h
+          fi
+        continue-on-error: true  # Don't fail build on warnings for now
+
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [syntax-check, cross-compile, code-quality]
+    if: always()
+    steps:
+      - name: Check build status
+        run: |
+          echo "## GPU Driver Build Summary"
+          echo "- Syntax Check: ${{ needs.syntax-check.result }}"
+          echo "- Cross Compilation: ${{ needs.cross-compile.result }}"
+          echo "- Code Quality: ${{ needs.code-quality.result }}"
+          
+          if [ "${{ needs.syntax-check.result }}" != "success" ] || \
+             [ "${{ needs.cross-compile.result }}" != "success" ]; then
+            echo "::error::GPU driver build failed"
+            exit 1
+          fi
