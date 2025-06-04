@@ -58,26 +58,29 @@ echo "Creating root filesystem for variant: $VARIANT"
 
 # Extract base system
 echo "Extracting Arch Linux ARM base system..."
-tar -xf "$ARCH_TARBALL" -C "$OUTPUT"
+sudo tar -xf "$ARCH_TARBALL" -C "$OUTPUT" --no-same-owner --no-same-permissions || {
+    echo "Tar extraction failed, trying with different options..."
+    sudo tar -xf "$ARCH_TARBALL" -C "$OUTPUT" --no-same-owner --no-same-permissions --warning=no-file-ignored
+}
 
 # Install kernel modules
 echo "Installing kernel modules..."
-mkdir -p "$OUTPUT/lib/modules"
-cp -a "$KERNEL_MODULES/lib/modules/"* "$OUTPUT/lib/modules/"
+sudo mkdir -p "$OUTPUT/lib/modules"
+sudo cp -a "$KERNEL_MODULES/lib/modules/"* "$OUTPUT/lib/modules/"
 
 # Install Mali GPU driver
 echo "Installing Mali GPU driver..."
-mkdir -p "$OUTPUT/usr/lib"
-cp "$MALI_DRIVER" "$OUTPUT/usr/lib/libmali.so"
-ln -sf libmali.so "$OUTPUT/usr/lib/libEGL.so.1"
-ln -sf libmali.so "$OUTPUT/usr/lib/libGLESv2.so.2"
-ln -sf libmali.so "$OUTPUT/usr/lib/libgbm.so.1"
+sudo mkdir -p "$OUTPUT/usr/lib"
+sudo cp "$MALI_DRIVER" "$OUTPUT/usr/lib/libmali.so"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libEGL.so.1"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libGLESv2.so.2"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libgbm.so.1"
 
 # Create necessary configuration based on variant
-mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
+sudo mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
 
 # Create USB gadget service
-cat > "$OUTPUT/etc/systemd/system/usb-gadget.service" << EOF
+sudo tee "$OUTPUT/etc/systemd/system/usb-gadget.service" > /dev/null << EOF
 [Unit]
 Description=USB Gadget Mode Setup
 After=local-fs.target
@@ -91,11 +94,11 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-ln -sf ../usb-gadget.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/usb-gadget.service"
+sudo ln -sf ../usb-gadget.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/usb-gadget.service"
 
 # Create gadget setup script
-mkdir -p "$OUTPUT/usr/local/bin"
-cat > "$OUTPUT/usr/local/bin/setup-gadget.sh" << EOF
+sudo mkdir -p "$OUTPUT/usr/local/bin"
+sudo tee "$OUTPUT/usr/local/bin/setup-gadget.sh" > /dev/null << EOF
 #!/bin/bash
 # Script to set up USB gadget mode based on /boot/gadget-mode
 
@@ -122,10 +125,10 @@ if [ -f /boot/gadget-mode ]; then
 fi
 EOF
 
-chmod +x "$OUTPUT/usr/local/bin/setup-gadget.sh"
+sudo chmod +x "$OUTPUT/usr/local/bin/setup-gadget.sh"
 
 # Create first boot setup
-cat > "$OUTPUT/etc/systemd/system/firstboot.service" << EOF
+sudo tee "$OUTPUT/etc/systemd/system/firstboot.service" > /dev/null << EOF
 [Unit]
 Description=First Boot Setup
 After=local-fs.target
@@ -141,9 +144,9 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-ln -sf ../firstboot.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/firstboot.service"
+sudo ln -sf ../firstboot.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/firstboot.service"
 
-cat > "$OUTPUT/usr/local/bin/firstboot.sh" << EOF
+sudo tee "$OUTPUT/usr/local/bin/firstboot.sh" > /dev/null << EOF
 #!/bin/bash
 # First boot setup script
 
@@ -159,18 +162,18 @@ ssh-keygen -A
 echo "orangepi-zero2w" > /etc/hostname
 EOF
 
-chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
+sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
 
 # Set root password
 echo "Setting root password..."
-echo 'root:orangepi' | chroot "$OUTPUT" chpasswd
+echo 'root:orangepi' | sudo chroot "$OUTPUT" chpasswd
 
 # Clean up based on variant
 if [ "$VARIANT" = "runtime" ]; then
   echo "Cleaning up for runtime edition..."
-  rm -rf "$OUTPUT/usr/include"
-  rm -rf "$OUTPUT/usr/share/man"
-  rm -rf "$OUTPUT/usr/share/doc"
+  sudo rm -rf "$OUTPUT/usr/include"
+  sudo rm -rf "$OUTPUT/usr/share/man"
+  sudo rm -rf "$OUTPUT/usr/share/doc"
 fi
 
 echo "Root filesystem created successfully at: $OUTPUT"
