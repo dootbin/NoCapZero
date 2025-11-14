@@ -415,10 +415,33 @@ jobs:
             ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
             ./scripts/config --disable CONFIG_SND_SOC_QCOM
             ./scripts/config --disable CONFIG_SND_SOC_MESON
-            ./scripts/config --disable CONFIG_SND_SOC_FSL
-            ./scripts/config --disable CONFIG_SND_SOC_IMX
             ./scripts/config --disable CONFIG_SND_SOC_SAMSUNG
+
+            # FSL (Freescale/NXP i.MX) sound drivers (all variants)
+            ./scripts/config --disable CONFIG_SND_SOC_FSL
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASRC
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SAI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SSI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ESAI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_MICFIL
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_EASRC
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_UTILS
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUDMIX
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_RPMSG
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUD2HTX
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_XCVR
+            ./scripts/config --disable CONFIG_SND_SOC_IMX
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_AUDMUX
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_SGTL5000
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_ES8328
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASOC_CARD
+
+            # SH (Renesas SuperH/R-Car) sound drivers (all variants)
             ./scripts/config --disable CONFIG_SND_SOC_SH
+            ./scripts/config --disable CONFIG_SND_SOC_RCAR
+            ./scripts/config --disable CONFIG_SND_SOC_RZ_SSI
 
             # === Disable GPU Drivers for Other Platforms ===
             # Keep only Mali (for our G31) and basic DRM
