@@ -300,6 +300,11 @@ jobs:
                 ./scripts/config --set-str "$config_name" "$config_value"
               fi
             done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
+
+            # Disable problematic drivers that cause build failures
+            # SUNXI_EPHY has undefined references in the Orange Pi vendor kernel
+            ./scripts/config --disable CONFIG_SUNXI_EPHY
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
