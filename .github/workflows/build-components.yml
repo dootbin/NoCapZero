@@ -144,11 +144,27 @@ jobs:
             done < ${{ github.workspace }}/configs/kernel-config
           fi
 
-          # Disable unnecessary subsystems to speed up build
+          # Disable unnecessary subsystems to speed up build and avoid build failures
+          ./scripts/config --disable CONFIG_COMPILE_TEST
+
+          # Disable SoC sound drivers that aren't needed for Orange Pi Zero 2W
+          ./scripts/config --disable CONFIG_SND_SOC
           ./scripts/config --disable CONFIG_SND_SOC_TEGRA
           ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
           ./scripts/config --disable CONFIG_SND_SOC_QCOM
-          ./scripts/config --disable CONFIG_COMPILE_TEST
+          ./scripts/config --disable CONFIG_SND_SOC_MESON
+          ./scripts/config --disable CONFIG_SND_SOC_SH
+          ./scripts/config --disable CONFIG_SND_SOC_SUNXI
+
+          # Disable other problematic sound subsystems
+          ./scripts/config --disable CONFIG_SND_DESIGNWARE_I2S
+          ./scripts/config --disable CONFIG_SND_SOC_AMD_ACP
+          ./scripts/config --disable CONFIG_SND_SOC_INTEL_SKYLAKE
+          ./scripts/config --disable CONFIG_SND_SOC_INTEL_BXT
+
+          # Keep basic ALSA support if needed
+          ./scripts/config --enable CONFIG_SND
+          ./scripts/config --enable CONFIG_SND_USB_AUDIO
 
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
           
