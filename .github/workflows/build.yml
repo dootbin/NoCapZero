@@ -477,6 +477,10 @@ jobs:
             ./scripts/config --disable CONFIG_ISDN
 
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+
+            # Force disable SUNXI_EPHY again after olddefconfig (in case dependencies re-enabled it)
+            ./scripts/config --disable CONFIG_SUNXI_EPHY
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
             cp arch/arm64/boot/Image /tmp/downloads/
