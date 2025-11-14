@@ -246,14 +246,14 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: components-${{ github.sha }}
-          name: Components Build ${{ github.sha }} ($(date +'%Y-%m-%d %H:%M'))
+          name: Components Build ${{ github.sha }}
           prerelease: false
           files: artifacts/*
           body: |
             ## Pre-built Components for Orange Pi Zero 2W
-            
+
             Git Commit: ${{ github.sha }}
-            Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            Build Date: ${{ github.event.head_commit.timestamp }}
             
             ### Components:
             - U-Boot with SPL
