@@ -227,8 +227,8 @@ jobs:
           files: artifacts/*
           body: |
             Pre-built components for Orange Pi Zero 2W
-            
-            Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+            Build Date: ${{ github.event.head_commit.timestamp }}
             Kernel Version: Orange Pi 6.1-sun50iw9
             
             ## Components
