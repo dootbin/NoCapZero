@@ -343,7 +343,31 @@ jobs:
 
             # === Disable SoC-Specific Sound Drivers ===
             # Keep only generic ALSA and Allwinner (SUNXI) sound
+
+            # Tegra sound drivers (all variants)
             ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_PCM
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_AC97
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_DAS
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_AHUB
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_ASRC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_DSPK
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AHUB
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_DMIC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADMAIF
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADX
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AMX
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MIXER
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MVC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_OPE
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_SFC
+
+            # Other SoC sound drivers
             ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
             ./scripts/config --disable CONFIG_SND_SOC_QCOM
             ./scripts/config --disable CONFIG_SND_SOC_MESON
