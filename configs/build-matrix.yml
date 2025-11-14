@@ -1,10 +1,11 @@
 variants:
   runtime:
     packages: configs/packages/runtime.list
-    size_limit: 100MB
+    size_limit: 150MB
     features:
       - usb_gadget
-      - minimal_arch
+      - hdmi_display
+      - gpu_drivers
   
   development:
     packages: configs/packages/development.list

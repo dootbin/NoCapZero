@@ -3,3 +3,6 @@ linux-firmware
 systemd
 wpa_supplicant
 openssl
+libdrm
+mesa
+mali-g31-firmware
