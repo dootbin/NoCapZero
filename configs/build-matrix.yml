@@ -1,12 +1,10 @@
 variants:
   runtime:
     packages: configs/packages/runtime.list
-    size_limit: 200MB
+    size_limit: 100MB
     features:
-      - gpu_acceleration
-      - video_decode
       - usb_gadget
-      - static_binary_support
+      - minimal_arch
   
   development:
     packages: configs/packages/development.list
