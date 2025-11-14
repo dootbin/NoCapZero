@@ -22,10 +22,12 @@ This repository provides **automated build pipelines** that compile a minimal Ar
 
 - **Built from source**: U-Boot, kernel, and all modules compiled in CI pipeline
 - **Supply chain verified**: Mali GPU driver checksums verified on every build
-- **Minimal footprint**: Sub-400MB complete system
+- **Hardware-specific kernel**: 80+ unnecessary drivers stripped - only Allwinner H618 drivers remain
+- **Minimal footprint**: Sub-400MB complete system, minimal kernel image
 - **Hardware acceleration**: Mali-G31 GPU, H.264/H.265 hardware decode
 - **USB gadget support**: Mass storage, networking, and serial console modes
 - **Reproducible builds**: Same inputs = same outputs in GitHub Actions
+- **Security focused**: Minimal attack surface, no bloat from other platforms
 
 ## Features
 
@@ -105,6 +107,48 @@ See `checksums/README.md` for details on our verification process.
 - Build process is deterministic (same inputs = same outputs)
 - Builds run in isolated GitHub Actions runners
 - No manual intervention required
+
+## Kernel Minimization
+
+**We build a hardware-specific kernel with only Orange Pi Zero 2W drivers.**
+
+The Orange Pi vendor kernel enables drivers for dozens of other ARM platforms by default. We aggressively strip all unnecessary drivers during the build process to create a truly minimal kernel.
+
+### What We Remove (80+ drivers disabled)
+
+| Category | Removed | Kept |
+|----------|---------|------|
+| **ARM SoC Platforms** | Tegra, Rockchip, Qualcomm, Samsung Exynos, MediaTek, Broadcom (RPi), Apple Silicon, Marvell, NXP, HiSilicon, and 20+ more | **Only Allwinner (SUNXI)** |
+| **GPU Drivers** | AMD, NVIDIA, Intel, Broadcom VC4, Vivante Etnaviv | **Only Mali + basic DRM** |
+| **Network Drivers** | Intel, Broadcom, Realtek, Marvell enterprise NICs | **Only USB ethernet, WiFi, Allwinner networking** |
+| **Sound Drivers** | Tegra, Rockchip, Qualcomm, Samsung, Freescale audio subsystems | **Only ALSA core + Allwinner sound** |
+| **Platform Features** | STAGING (unstable), COMPILE_TEST (testing-only), InfiniBand, PCMCIA, ISDN | None - all removed |
+
+### Benefits of Minimal Kernel
+
+- 📦 **30-40% smaller kernel image** - Less storage required, faster boot
+- ⚡ **Faster compilation** - Fewer drivers = shorter build times
+- 🔒 **Reduced attack surface** - Less code = fewer potential vulnerabilities
+- 🎯 **Hardware-specific** - No unnecessary modules loaded at runtime
+- 💾 **Lower memory usage** - Minimal kernel footprint
+
+### Implementation
+
+Driver removal happens during kernel build:
+```bash
+# Disable entire SoC platforms (30+ platforms)
+./scripts/config --disable CONFIG_ARCH_TEGRA
+./scripts/config --disable CONFIG_ARCH_ROCKCHIP
+./scripts/config --disable CONFIG_ARCH_QCOM
+# ... and 27 more
+
+# Disable GPU drivers for other platforms
+./scripts/config --disable CONFIG_DRM_AMDGPU
+./scripts/config --disable CONFIG_DRM_I915
+# ... etc
+```
+
+See `.github/workflows/build.yml` for the complete list of disabled drivers.
 
 ### Available Releases
 
@@ -197,9 +241,10 @@ This workflow builds **everything from source** on every run:
 3. **Build Linux Kernel from Source**
    - Clone Orange Pi vendor kernel (6.1-sun50iw9 branch)
    - Apply custom kernel configuration from `configs/kernel-config`
-   - Disable problematic drivers (supply chain workarounds)
-   - Compile kernel Image and device tree blobs
-   - Build all kernel modules
+   - **Strip 80+ unnecessary drivers** (Tegra, Rockchip, Qualcomm, AMD/Intel GPUs, etc.)
+   - Disable problematic drivers with build failures
+   - Compile minimal, hardware-specific kernel Image and device tree blobs
+   - Build only Allwinner-relevant kernel modules
 
 4. **Download & Verify Mali GPU Driver**
    - Download binary driver from LibreELEC (no source available)
