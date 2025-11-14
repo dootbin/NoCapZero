@@ -12,3 +12,5 @@
 #
 # Format: <checksum> <filename>
 # Leave empty or comment out to disable verification (not recommended)
+
+85ded58f57e068920a8309e658989fd64e035121016e9ba2177bef81aba5d05f  libmali-bifrost-g31-r16p0-gbm.so
