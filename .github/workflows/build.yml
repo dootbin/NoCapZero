@@ -305,6 +305,22 @@ jobs:
             # SUNXI_EPHY has undefined references in the Orange Pi vendor kernel
             ./scripts/config --disable CONFIG_SUNXI_EPHY
 
+            # Disable SoC-specific sound drivers that cause linker errors
+            # These are for other SoCs (Tegra, Rockchip, etc.) not relevant to H618
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_DMIC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AHUB
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP_PDM
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_QCOM
+            ./scripts/config --disable CONFIG_SND_SOC_MESON
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
