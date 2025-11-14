@@ -73,7 +73,7 @@ jobs:
             else
               # If no exact match, find the most recent components release
               echo "No exact match found, searching for most recent components release..."
-              LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
+              LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | awk -F'\t' '$3 ~ /^components-/ {print $3; exit}')
               if [ -n "$LATEST_TAG" ]; then
                 echo "Found latest components release: $LATEST_TAG"
                 echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
@@ -85,7 +85,7 @@ jobs:
           else
             # For other triggers, find the most recent components release
             echo "Searching for most recent components release..."
-            LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
+            LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | awk -F'\t' '$3 ~ /^components-/ {print $3; exit}')
             if [ -n "$LATEST_TAG" ]; then
               echo "Found latest components release: $LATEST_TAG"
               echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
