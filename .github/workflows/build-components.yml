@@ -118,23 +118,39 @@ jobs:
             [ -f "$patch" ] && git apply "$patch"
           done
           
-          # Configure kernel
+          # Configure kernel - use defconfig as base, then apply our custom config
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
+
+          # Apply custom configuration
           if [ -f ${{ github.workspace }}/configs/kernel-config ]; then
-            cp ${{ github.workspace }}/configs/kernel-config .config
-          else
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
-            ./scripts/config --enable CONFIG_ARCH_SUNXI
-            ./scripts/config --enable CONFIG_MACH_SUN50I
-            ./scripts/config --enable CONFIG_USB_GADGET
-            ./scripts/config --enable CONFIG_USB_CONFIGFS
-            ./scripts/config --enable CONFIG_USB_ETH
-            ./scripts/config --enable CONFIG_USB_MASS_STORAGE
-            ./scripts/config --enable CONFIG_USB_G_SERIAL
+            while IFS= read -r line; do
+              # Skip comments and empty lines
+              [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+
+              if [[ $line == CONFIG_* ]] && [[ $line == *=y ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --enable "${config_name#CONFIG_}"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=m ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --module "${config_name#CONFIG_}"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=n ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --disable "${config_name#CONFIG_}"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=* ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                config_value=$(echo "$line" | cut -d'=' -f2-)
+                ./scripts/config --set-str "${config_name#CONFIG_}" "$config_value"
+              fi
+            done < ${{ github.workspace }}/configs/kernel-config
           fi
-          
+
+          # Disable unnecessary subsystems to speed up build
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+          ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
+          ./scripts/config --disable CONFIG_SND_SOC_QCOM
+          ./scripts/config --disable CONFIG_COMPILE_TEST
+
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-          # Ensure modules are enabled after olddefconfig
-          ./scripts/config --enable CONFIG_MODULES
           
           # Build kernel and modules
           make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules

@@ -288,18 +288,31 @@ jobs:
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
             # Apply our custom configuration
             while IFS= read -r line; do
+              # Skip comments and empty lines
+              [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+
               if [[ $line == CONFIG_* ]] && [[ $line == *=y ]]; then
                 config_name=$(echo "$line" | cut -d'=' -f1)
-                ./scripts/config --enable "$config_name"
+                ./scripts/config --enable "${config_name#CONFIG_}"
               elif [[ $line == CONFIG_* ]] && [[ $line == *=m ]]; then
                 config_name=$(echo "$line" | cut -d'=' -f1)
-                ./scripts/config --module "$config_name"
+                ./scripts/config --module "${config_name#CONFIG_}"
+              elif [[ $line == CONFIG_* ]] && [[ $line == *=n ]]; then
+                config_name=$(echo "$line" | cut -d'=' -f1)
+                ./scripts/config --disable "${config_name#CONFIG_}"
               elif [[ $line == CONFIG_* ]] && [[ $line == *=* ]]; then
                 config_name=$(echo "$line" | cut -d'=' -f1)
-                config_value=$(echo "$line" | cut -d'=' -f2)
-                ./scripts/config --set-str "$config_name" "$config_value"
+                config_value=$(echo "$line" | cut -d'=' -f2-)
+                ./scripts/config --set-str "${config_name#CONFIG_}" "$config_value"
               fi
-            done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
+            done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config)
+
+            # Disable unnecessary subsystems to speed up build and reduce disk usage
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
+            ./scripts/config --disable CONFIG_SND_SOC_QCOM
+            ./scripts/config --disable CONFIG_COMPILE_TEST
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
