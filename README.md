@@ -1,17 +1,31 @@
 # Orange Pi Zero 2W Minimal Build System
 
-Automated GitHub Actions workflows for building minimal, hardware-accelerated Linux distributions for the Orange Pi Zero 2W single-board computer.
+**Supply chain secure, build-from-source Linux distribution for Orange Pi Zero 2W**
 
 ## Overview
 
-This repository contains GitHub Actions workflows that automatically build and release minimal Arch Linux ARM systems optimized for Orange Pi Zero 2W hardware, featuring:
+This repository provides **automated build pipelines** that compile a minimal Arch Linux ARM system **entirely from source** for the Orange Pi Zero 2W single-board computer.
 
+### Why Build From Source?
+
+**Supply chain security is our primary goal.** We build all components from source to eliminate trust in pre-built binaries:
+
+- ✅ **U-Boot bootloader**: Compiled from ARM Trusted Firmware + U-Boot source
+- ✅ **Linux kernel**: Built from Orange Pi vendor kernel source
+- ✅ **Kernel modules**: Compiled during kernel build
+- ✅ **Root filesystem**: Assembled from Arch Linux ARM base + runtime libraries
+- ⚠️ **Mali GPU driver**: Binary-only (no source available from ARM) - checksum verified
+
+**This is intentional.** We accept longer build times (~30-90 minutes) to ensure we control the entire software supply chain from source code to bootable image.
+
+### Key Features
+
+- **Built from source**: U-Boot, kernel, and all modules compiled in CI pipeline
+- **Supply chain verified**: Mali GPU driver checksums verified on every build
 - **Minimal footprint**: Sub-400MB complete system
-- **Hardware acceleration**: Mali-G31 GPU support with OpenGL ES/Vulkan
-- **Video decode acceleration**: H.264/H.265 hardware decoding via Cedrus
+- **Hardware acceleration**: Mali-G31 GPU, H.264/H.265 hardware decode
 - **USB gadget support**: Mass storage, networking, and serial console modes
-- **Go development environment**: Ready for modern application development
-- **WebKit integration**: Hardware-accelerated web rendering
+- **Reproducible builds**: Same inputs = same outputs in GitHub Actions
 
 ## Features
 
@@ -37,9 +51,60 @@ This repository contains GitHub Actions workflows that automatically build and r
 - ✅ Cross-compilation optimized
 - ✅ Static binary support
 
-## Automated Builds
+## Build Pipeline
 
-All builds are performed automatically via GitHub Actions on every push and release. The system uses pre-built components (kernel, U-Boot) for fast and reliable builds, with only the root filesystem being assembled during each build.
+**All components are built from source in GitHub Actions on every run.** This is a manual, from-source build process that prioritizes supply chain security over build speed.
+
+### Build Process (Automated in CI)
+
+Each build performs these steps from scratch:
+
+1. **Build ARM Trusted Firmware** - Compile BL31 for Allwinner H618
+2. **Build U-Boot** - Compile bootloader with ATF integration
+3. **Build Linux Kernel** - Compile Orange Pi vendor kernel (6.1-sun50iw9)
+4. **Build Kernel Modules** - Compile all required drivers
+5. **Download & Verify Mali Driver** - Binary-only GPU driver with SHA256 verification
+6. **Assemble Root Filesystem** - Create Arch Linux ARM based system
+7. **Generate Bootable Image** - Package everything into flashable SD card image
+
+**Build time**: ~30-90 minutes (depending on variant and runner performance)
+
+**Why so long?** We're compiling the entire kernel, U-Boot, and ATF from source on every build for supply chain security.
+
+## Supply Chain Security
+
+This project takes supply chain security seriously. Here's our approach:
+
+### What We Build From Source
+
+| Component | Source | Why |
+|-----------|--------|-----|
+| ARM Trusted Firmware | ARM GitHub (official) | Closed-source but official ARM repository |
+| U-Boot Bootloader | U-Boot GitHub (official) | Open source, compiled from latest stable tag |
+| Linux Kernel | Orange Pi vendor kernel | Open source, H618-specific optimizations |
+| Kernel Modules | Same as kernel | All drivers compiled during kernel build |
+| Root Filesystem | Arch Linux ARM | Assembled from official Arch ARM base |
+
+### What We Can't Build (Binary-Only)
+
+| Component | Source | Verification |
+|-----------|--------|--------------|
+| Mali G31 GPU Driver | LibreELEC GitHub | **SHA256 checksum verified on every build** |
+
+ARM does not provide source code for Mali GPU userspace drivers. We:
+- Download from LibreELEC (trusted community source)
+- Verify SHA256 checksum on every build
+- Fail builds on checksum mismatch
+- Maintain audit trail of checksum updates
+
+See `checksums/README.md` for details on our verification process.
+
+### Build Reproducibility
+
+- All source code versions are pinned (git tags/branches)
+- Build process is deterministic (same inputs = same outputs)
+- Builds run in isolated GitHub Actions runners
+- No manual intervention required
 
 ### Available Releases
 
@@ -100,58 +165,72 @@ ssh root@orangepi-ip "chmod +x /usr/local/bin/myapp && systemctl enable myapp"
 
 ## GitHub Actions Workflows
 
-This repository contains automated workflows that build complete Orange Pi Zero 2W images:
+This repository contains automated workflows that **build everything from source** for supply chain security:
 
 ### Workflow Structure
 ```
 .github/workflows/
-├── build.yml           # Main build workflow
-├── release.yml         # Release creation workflow  
-├── test.yml            # Hardware testing workflow
-└── nightly.yml         # Nightly development builds
+├── build.yml              # Main build-from-source workflow
+├── build-components.yml   # Component building workflow
+├── bootstrap-components.yml # Initial component bootstrap
+├── release.yml            # Release creation workflow
+└── test.yml               # Hardware testing workflow
 ```
 
 ### Build Workflow (`build.yml`)
 
-Triggered on every push to main branch and pull requests:
+**Triggered on every push to main branch and pull requests.**
 
-1. **Download Pre-built Components**
-   - U-Boot bootloader (from components-latest release)
-   - Linux kernel and modules (from components-latest release)
-   - Mali GPU drivers
+This workflow builds **everything from source** on every run:
 
-2. **Create Root Filesystem**
+1. **Build ARM Trusted Firmware (ATF)**
+   - Clone ARM's official ATF repository
+   - Compile BL31 for Allwinner H618 SoC
+   - Cross-compile for ARM64 using aarch64-linux-gnu-gcc
+
+2. **Build U-Boot Bootloader**
+   - Clone official U-Boot repository
+   - Apply Orange Pi Zero 2W defconfig
+   - Link with ATF BL31
+   - Cross-compile for ARM
+
+3. **Build Linux Kernel from Source**
+   - Clone Orange Pi vendor kernel (6.1-sun50iw9 branch)
+   - Apply custom kernel configuration from `configs/kernel-config`
+   - Disable problematic drivers (supply chain workarounds)
+   - Compile kernel Image and device tree blobs
+   - Build all kernel modules
+
+4. **Download & Verify Mali GPU Driver**
+   - Download binary driver from LibreELEC (no source available)
+   - Calculate SHA256 checksum
+   - **Verify against expected checksum** (fail build on mismatch)
+
+5. **Create Root Filesystem**
    - Download Arch Linux ARM base system
-   - Install runtime libraries (GTK4, WebKit, Mesa)
+   - Install compiled kernel modules
+   - Install verified Mali GPU driver
    - Configure USB gadget support and system services
-   - Remove development tools and unnecessary packages
+   - Variant-specific customization (runtime/development/debug)
 
-3. **Generate Images**
-   - Create bootable SD card image
-   - Generate compressed releases for download
-   - Calculate checksums and create manifest
+6. **Generate Bootable Image**
+   - Create SD card partition layout
+   - Install compiled U-Boot to boot sector
+   - Copy compiled kernel and DTB
+   - Package root filesystem
+   - Generate compressed image for distribution
 
-4. **Upload Artifacts**
+7. **Upload Artifacts**
    - Store build artifacts for 30 days
    - Upload images to release drafts
 
+**Build time**: 30-90 minutes (compiling kernel + U-Boot + ATF from scratch)
+
 ### Component Build Workflow (`build-components.yml`)
 
-Triggered weekly or when patches are updated:
+**Same as main build workflow** - builds all components from source.
 
-1. **Build ARM Trusted Firmware**
-   - Required for U-Boot on Allwinner H618
-
-2. **Build U-Boot**
-   - Latest stable U-Boot with Orange Pi Zero 2W support
-
-3. **Build Kernel**
-   - Orange Pi vendor kernel (6.1-sun50iw9 branch)
-   - Includes hardware acceleration support
-
-4. **Package Components**
-   - Create components-latest release
-   - Used by all other workflows
+This workflow exists to create reusable component artifacts, but the main build workflow (`build.yml`) **always builds from source** and does not rely on these pre-built components for supply chain security reasons.
 
 ### Release Workflow (`release.yml`)
 
