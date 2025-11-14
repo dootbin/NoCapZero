@@ -480,6 +480,8 @@ jobs:
 
             # Force disable SUNXI_EPHY again after olddefconfig (in case dependencies re-enabled it)
             ./scripts/config --disable CONFIG_SUNXI_EPHY
+            # Run olddefconfig again to ensure config consistency
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
 
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
