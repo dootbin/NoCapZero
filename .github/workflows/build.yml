@@ -5,6 +5,9 @@ on:
     workflows: ["Build and Publish Components"]
     types: [completed]
     branches: [main]
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags (v0.1.0-alpha.1, v1.0.0, etc.)
   workflow_dispatch:
     inputs:
       build_variant:
@@ -551,6 +554,43 @@ jobs:
             orangepi-zero2w-${{ matrix.variant }}.img.xz
             orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
             orangepi-zero2w-${{ matrix.variant }}.info
+          body: |
+            ## Orange Pi Zero 2W - ${{ matrix.variant }} Edition
+
+            **Build-from-source Linux distribution for Orange Pi Zero 2W (Allwinner H618)**
+
+            ### What's Included
+            - ✅ Bootable SD card image (write with `dd` or balenaEtcher)
+            - ✅ Custom minimized kernel (6.1.31-orangepi-zero2w)
+            - ✅ Arch Linux ARM base system
+            - ✅ Mali-G31 GPU drivers
+            - ✅ WiFi/Bluetooth support (Realtek/Broadcom)
+
+            ### Quick Start
+            ```bash
+            # Download and verify
+            wget orangepi-zero2w-${{ matrix.variant }}.img.xz
+            sha256sum -c orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
+
+            # Write to SD card (replace /dev/sdX with your SD card)
+            xzcat orangepi-zero2w-${{ matrix.variant }}.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
+            sync
+            ```
+
+            ### Login
+            - **Username:** `root`
+            - **Password:** `orangepi`
+
+            ### Image Sizes
+            - **runtime**: ~1GB partition (~650-700MB used) - Minimal system
+            - **development**: ~1.2GB partition - Adds git, gcc, make, cmake, go
+            - **debug**: ~1.5GB partition - Adds gdb, valgrind, strace, perf
+
+            **Note:** ⚠️ Wired Ethernet currently disabled due to AC200 ePHY driver issues (see issue #28)
+
+            ---
+
+            📦 Built from source for supply chain security | 🔒 Minimal attack surface | 🎯 Hardware-specific (Orange Pi Zero 2W only)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
