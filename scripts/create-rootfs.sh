@@ -67,8 +67,8 @@ sudo mkdir -p "$OUTPUT/lib/modules"
 TEMP_MODULES="/tmp/kernel-modules-extract"
 mkdir -p "$TEMP_MODULES"
 sudo tar -xzf "$KERNEL_MODULES" -C "$TEMP_MODULES"
-# Copy modules to rootfs
-sudo cp -a "$TEMP_MODULES/lib/modules/"* "$OUTPUT/lib/modules/"
+# Copy modules to rootfs (tarball has modules/lib/modules/ structure)
+sudo cp -a "$TEMP_MODULES/modules/lib/modules/"* "$OUTPUT/lib/modules/"
 # Clean up
 rm -rf "$TEMP_MODULES"
 
