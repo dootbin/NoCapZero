@@ -477,11 +477,24 @@ jobs:
             ./scripts/config --disable CONFIG_ISDN
 
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+            echo "DEBUG: After first olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
 
             # Force disable SUNXI_EPHY again after olddefconfig (in case dependencies re-enabled it)
             ./scripts/config --disable CONFIG_SUNXI_EPHY
+            echo "DEBUG: After second disable, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
             # Run olddefconfig again to ensure config consistency
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+            echo "DEBUG: After second olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+            # Final check - if SUNXI_EPHY got re-enabled, fail with clear error
+            if grep -q "^CONFIG_SUNXI_EPHY=y" .config; then
+              echo "ERROR: CONFIG_SUNXI_EPHY is still enabled despite our disables!"
+              echo "This is likely due to a Kconfig 'select' statement from another config."
+              echo "Checking what might be selecting it:"
+              grep -E "CONFIG_.*EXT_PHY|CONFIG_.*AC200|CONFIG_.*SUNXI.*=" .config | head -20
+              exit 1
+            fi
 
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
