@@ -51,33 +51,40 @@ DEVELOPMENT_PACKAGES="$RUNTIME_PACKAGES git gcc make cmake go"
 DEBUG_PACKAGES="$DEVELOPMENT_PACKAGES gdb valgrind strace perf"
 
 # Create clean output directory
-rm -rf "$OUTPUT"
-mkdir -p "$OUTPUT"
+sudo rm -rf "$OUTPUT"
+sudo mkdir -p "$OUTPUT"
 
 echo "Creating root filesystem for variant: $VARIANT"
 
 # Extract base system
 echo "Extracting Arch Linux ARM base system..."
-tar -xf "$ARCH_TARBALL" -C "$OUTPUT"
+sudo tar -xpf "$ARCH_TARBALL" -C "$OUTPUT"
 
 # Install kernel modules
 echo "Installing kernel modules..."
-mkdir -p "$OUTPUT/lib/modules"
-cp -a "$KERNEL_MODULES/lib/modules/"* "$OUTPUT/lib/modules/"
+sudo mkdir -p "$OUTPUT/lib/modules"
+# Extract modules tarball to temporary location
+TEMP_MODULES="/tmp/kernel-modules-extract"
+mkdir -p "$TEMP_MODULES"
+sudo tar -xzf "$KERNEL_MODULES" -C "$TEMP_MODULES"
+# Copy modules to rootfs
+sudo cp -a "$TEMP_MODULES/lib/modules/"* "$OUTPUT/lib/modules/"
+# Clean up
+rm -rf "$TEMP_MODULES"
 
 # Install Mali GPU driver
 echo "Installing Mali GPU driver..."
-mkdir -p "$OUTPUT/usr/lib"
-cp "$MALI_DRIVER" "$OUTPUT/usr/lib/libmali.so"
-ln -sf libmali.so "$OUTPUT/usr/lib/libEGL.so.1"
-ln -sf libmali.so "$OUTPUT/usr/lib/libGLESv2.so.2"
-ln -sf libmali.so "$OUTPUT/usr/lib/libgbm.so.1"
+sudo mkdir -p "$OUTPUT/usr/lib"
+sudo cp "$MALI_DRIVER" "$OUTPUT/usr/lib/libmali.so"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libEGL.so.1"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libGLESv2.so.2"
+sudo ln -sf libmali.so "$OUTPUT/usr/lib/libgbm.so.1"
 
 # Create necessary configuration based on variant
-mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
+sudo mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
 
 # Create USB gadget service
-cat > "$OUTPUT/etc/systemd/system/usb-gadget.service" << EOF
+sudo tee "$OUTPUT/etc/systemd/system/usb-gadget.service" > /dev/null << EOF
 [Unit]
 Description=USB Gadget Mode Setup
 After=local-fs.target
@@ -91,11 +98,11 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-ln -sf ../usb-gadget.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/usb-gadget.service"
+sudo ln -sf ../usb-gadget.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/usb-gadget.service"
 
 # Create gadget setup script
-mkdir -p "$OUTPUT/usr/local/bin"
-cat > "$OUTPUT/usr/local/bin/setup-gadget.sh" << EOF
+sudo mkdir -p "$OUTPUT/usr/local/bin"
+sudo tee "$OUTPUT/usr/local/bin/setup-gadget.sh" > /dev/null << EOF
 #!/bin/bash
 # Script to set up USB gadget mode based on /boot/gadget-mode
 
@@ -122,10 +129,10 @@ if [ -f /boot/gadget-mode ]; then
 fi
 EOF
 
-chmod +x "$OUTPUT/usr/local/bin/setup-gadget.sh"
+sudo chmod +x "$OUTPUT/usr/local/bin/setup-gadget.sh"
 
 # Create first boot setup
-cat > "$OUTPUT/etc/systemd/system/firstboot.service" << EOF
+sudo tee "$OUTPUT/etc/systemd/system/firstboot.service" > /dev/null << EOF
 [Unit]
 Description=First Boot Setup
 After=local-fs.target
@@ -141,9 +148,9 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-ln -sf ../firstboot.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/firstboot.service"
+sudo ln -sf ../firstboot.service "$OUTPUT/etc/systemd/system/multi-user.target.wants/firstboot.service"
 
-cat > "$OUTPUT/usr/local/bin/firstboot.sh" << EOF
+sudo tee "$OUTPUT/usr/local/bin/firstboot.sh" > /dev/null << EOF
 #!/bin/bash
 # First boot setup script
 
@@ -159,18 +166,61 @@ ssh-keygen -A
 echo "orangepi-zero2w" > /etc/hostname
 EOF
 
-chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
+sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
 
 # Set root password
 echo "Setting root password..."
-echo 'root:orangepi' | chroot "$OUTPUT" chpasswd
+echo 'root:orangepi' | sudo chroot "$OUTPUT" chpasswd
 
 # Clean up based on variant
 if [ "$VARIANT" = "runtime" ]; then
-  echo "Cleaning up for runtime edition..."
-  rm -rf "$OUTPUT/usr/include"
-  rm -rf "$OUTPUT/usr/share/man"
-  rm -rf "$OUTPUT/usr/share/doc"
+  echo "Cleaning up for runtime edition (aggressive minimal system)..."
+
+  # Remove development files
+  sudo rm -rf "$OUTPUT/usr/include"
+  sudo find "$OUTPUT/usr/lib" -name "*.a" -delete  # Static libraries
+
+  # Remove documentation
+  sudo rm -rf "$OUTPUT/usr/share/man"
+  sudo rm -rf "$OUTPUT/usr/share/doc"
+  sudo rm -rf "$OUTPUT/usr/share/info"
+  sudo rm -rf "$OUTPUT/usr/share/gtk-doc"
+
+  # Remove all locales except C/en_US
+  sudo find "$OUTPUT/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name 'en_US' ! -name 'locale.alias' -exec rm -rf {} +
+  sudo find "$OUTPUT/usr/share/i18n/locales" -mindepth 1 -maxdepth 1 ! -name 'en_US' ! -name 'en_GB' ! -name 'C' ! -name 'POSIX' ! -name 'i18n*' ! -name 'iso*' ! -name 'translit*' -exec rm -rf {} + 2>/dev/null || true
+
+  # Remove package manager cache
+  sudo rm -rf "$OUTPUT/var/cache/pacman"
+  sudo rm -rf "$OUTPUT/var/lib/pacman/sync"
+
+  # Remove systemd documentation
+  sudo rm -rf "$OUTPUT/usr/share/factory"
+
+  # Remove bash completion
+  sudo rm -rf "$OUTPUT/usr/share/bash-completion"
+
+  # Clean up logs
+  sudo rm -rf "$OUTPUT/var/log"/*
+
+  # CRITICAL: Remove ALL firmware except what Orange Pi Zero 2W actually needs
+  # Orange Pi Zero 2W uses:
+  # - Realtek or Broadcom WiFi/BT (rtl* or brcm*)
+  # - Allwinner-specific firmware
+  # Remove 500+MB of unnecessary firmware for other devices
+  if [ -d "$OUTPUT/usr/lib/firmware" ]; then
+    echo "Removing unnecessary firmware (keeping only Realtek/Broadcom/Allwinner)..."
+    cd "$OUTPUT/usr/lib/firmware"
+    # Keep only what we need, remove everything else
+    sudo find . -mindepth 1 -maxdepth 1 \
+      ! -name 'rtl*' \
+      ! -name 'brcm*' \
+      ! -name 'regulatory.db*' \
+      -exec rm -rf {} +
+    cd - > /dev/null
+  fi
+
+  echo "Runtime cleanup complete - minimal barebones system"
 fi
 
 echo "Root filesystem created successfully at: $OUTPUT"
