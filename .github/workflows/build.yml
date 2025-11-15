@@ -228,7 +228,51 @@ jobs:
           
       - name: Download Mali GPU driver
         run: |
-          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL" || echo "WARNING: Failed to download Mali driver"
+          echo "Downloading Mali GPU driver..."
+          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL" || {
+            echo "ERROR: Failed to download Mali driver"
+            exit 1
+          }
+
+          # Calculate checksum of downloaded file
+          DOWNLOADED_CHECKSUM=$(sha256sum /tmp/downloads/libmali.so | awk '{print $1}')
+          echo "Downloaded Mali driver checksum: $DOWNLOADED_CHECKSUM"
+
+          # Read expected checksum from repo (if exists)
+          CHECKSUM_FILE="checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
+          if [ -f "$CHECKSUM_FILE" ]; then
+            EXPECTED_CHECKSUM=$(grep -v '^#' "$CHECKSUM_FILE" | grep -v '^[[:space:]]*$' | awk '{print $1}' | head -1)
+
+            if [ -n "$EXPECTED_CHECKSUM" ]; then
+              echo "Expected checksum: $EXPECTED_CHECKSUM"
+
+              if [ "$DOWNLOADED_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+                echo "✓ Checksum verification PASSED - Mali driver integrity confirmed"
+              else
+                echo "✗ Checksum verification FAILED!"
+                echo "  Expected: $EXPECTED_CHECKSUM"
+                echo "  Got:      $DOWNLOADED_CHECKSUM"
+                echo ""
+                echo "SECURITY WARNING: Mali driver checksum mismatch!"
+                echo "This could indicate:"
+                echo "  1. LibreELEC updated the driver (verify if intentional)"
+                echo "  2. Supply chain compromise (investigate immediately)"
+                echo "  3. Network/download corruption"
+                echo ""
+                echo "To update the expected checksum (only if verified legitimate):"
+                echo "  Update checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
+                exit 1
+              fi
+            else
+              echo "⚠ WARNING: No checksum configured in $CHECKSUM_FILE"
+              echo "⚠ Supply chain verification is DISABLED"
+              echo "⚠ Add this checksum to $CHECKSUM_FILE to enable verification:"
+              echo "$DOWNLOADED_CHECKSUM  libmali-bifrost-g31-r16p0-gbm.so"
+            fi
+          else
+            echo "⚠ WARNING: Checksum file not found: $CHECKSUM_FILE"
+            echo "⚠ Current checksum: $DOWNLOADED_CHECKSUM"
+          fi
 
       - name: Download Arch Linux ARM base
         run: |
@@ -300,7 +344,158 @@ jobs:
                 ./scripts/config --set-str "$config_name" "$config_value"
               fi
             done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
+
+            # Disable drivers for other platforms - Orange Pi Zero 2W is Allwinner H618 only
+            # This significantly reduces kernel size and build time
+
+            # Disable problematic ethernet driver (has undefined references)
+            ./scripts/config --disable CONFIG_SUNXI_EPHY
+
+            # === Disable Other ARM SoC Platforms ===
+            # We only need ARCH_SUNXI (Allwinner), disable everything else
+            ./scripts/config --disable CONFIG_ARCH_ACTIONS
+            ./scripts/config --disable CONFIG_ARCH_AGILEX
+            ./scripts/config --disable CONFIG_ARCH_ALPINE
+            ./scripts/config --disable CONFIG_ARCH_APPLE
+            ./scripts/config --disable CONFIG_ARCH_BCM
+            ./scripts/config --disable CONFIG_ARCH_BCM2835
+            ./scripts/config --disable CONFIG_ARCH_BCM_IPROC
+            ./scripts/config --disable CONFIG_ARCH_BERLIN
+            ./scripts/config --disable CONFIG_ARCH_BRCMSTB
+            ./scripts/config --disable CONFIG_ARCH_EXYNOS
+            ./scripts/config --disable CONFIG_ARCH_K3
+            ./scripts/config --disable CONFIG_ARCH_LAYERSCAPE
+            ./scripts/config --disable CONFIG_ARCH_LG1K
+            ./scripts/config --disable CONFIG_ARCH_HISI
+            ./scripts/config --disable CONFIG_ARCH_MEDIATEK
+            ./scripts/config --disable CONFIG_ARCH_MESON
+            ./scripts/config --disable CONFIG_ARCH_MVEBU
+            ./scripts/config --disable CONFIG_ARCH_MXC
+            ./scripts/config --disable CONFIG_ARCH_QCOM
+            ./scripts/config --disable CONFIG_ARCH_ROCKCHIP
+            ./scripts/config --disable CONFIG_ARCH_S32
+            ./scripts/config --disable CONFIG_ARCH_SEATTLE
+            ./scripts/config --disable CONFIG_ARCH_SYNQUACER
+            ./scripts/config --disable CONFIG_ARCH_TEGRA
+            ./scripts/config --disable CONFIG_ARCH_SPRD
+            ./scripts/config --disable CONFIG_ARCH_THUNDER
+            ./scripts/config --disable CONFIG_ARCH_THUNDER2
+            ./scripts/config --disable CONFIG_ARCH_UNIPHIER
+            ./scripts/config --disable CONFIG_ARCH_VEXPRESS
+            ./scripts/config --disable CONFIG_ARCH_XGENE
+            ./scripts/config --disable CONFIG_ARCH_ZYNQMP
+
+            # === Disable SoC-Specific Sound Drivers ===
+            # Keep only generic ALSA and Allwinner (SUNXI) sound
+
+            # Tegra sound drivers (all variants)
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_PCM
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_AC97
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_DAS
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_AHUB
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_ASRC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_DSPK
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AHUB
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_DMIC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_I2S
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADMAIF
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADX
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AMX
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MIXER
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MVC
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_OPE
+            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_SFC
+
+            # Other SoC sound drivers
+            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
+            ./scripts/config --disable CONFIG_SND_SOC_QCOM
+            ./scripts/config --disable CONFIG_SND_SOC_MESON
+            ./scripts/config --disable CONFIG_SND_SOC_SAMSUNG
+
+            # FSL (Freescale/NXP i.MX) sound drivers (all variants)
+            ./scripts/config --disable CONFIG_SND_SOC_FSL
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASRC
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SAI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SSI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ESAI
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_MICFIL
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_EASRC
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_UTILS
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUDMIX
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_RPMSG
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUD2HTX
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_XCVR
+            ./scripts/config --disable CONFIG_SND_SOC_IMX
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_AUDMUX
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_SGTL5000
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_SPDIF
+            ./scripts/config --disable CONFIG_SND_SOC_IMX_ES8328
+            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASOC_CARD
+
+            # SH (Renesas SuperH/R-Car) sound drivers (all variants)
+            ./scripts/config --disable CONFIG_SND_SOC_SH
+            ./scripts/config --disable CONFIG_SND_SOC_RCAR
+            ./scripts/config --disable CONFIG_SND_SOC_RZ_SSI
+
+            # === Disable GPU Drivers for Other Platforms ===
+            # Keep only Mali (for our G31) and basic DRM
+            ./scripts/config --disable CONFIG_DRM_AMDGPU
+            ./scripts/config --disable CONFIG_DRM_RADEON
+            ./scripts/config --disable CONFIG_DRM_NOUVEAU
+            ./scripts/config --disable CONFIG_DRM_I915
+            ./scripts/config --disable CONFIG_DRM_TEGRA
+            ./scripts/config --disable CONFIG_DRM_ROCKCHIP
+            ./scripts/config --disable CONFIG_DRM_EXYNOS
+            ./scripts/config --disable CONFIG_DRM_MSM
+            ./scripts/config --disable CONFIG_DRM_MESON
+            ./scripts/config --disable CONFIG_DRM_VC4
+            ./scripts/config --disable CONFIG_DRM_ETNAVIV
+
+            # === Disable Unnecessary Network Drivers ===
+            # Keep only what's needed: USB ethernet, WiFi, basic networking
+            ./scripts/config --disable CONFIG_NET_VENDOR_3COM
+            ./scripts/config --disable CONFIG_NET_VENDOR_ADAPTEC
+            ./scripts/config --disable CONFIG_NET_VENDOR_AMD
+            ./scripts/config --disable CONFIG_NET_VENDOR_BROADCOM
+            ./scripts/config --disable CONFIG_NET_VENDOR_INTEL
+            ./scripts/config --disable CONFIG_NET_VENDOR_MARVELL
+            ./scripts/config --disable CONFIG_NET_VENDOR_NVIDIA
+            ./scripts/config --disable CONFIG_NET_VENDOR_REALTEK
+            ./scripts/config --disable CONFIG_NET_VENDOR_QUALCOMM
+
+            # === Disable Platform-Specific Features ===
+            ./scripts/config --disable CONFIG_COMPILE_TEST
+            ./scripts/config --disable CONFIG_STAGING
+            ./scripts/config --disable CONFIG_INFINIBAND
+            ./scripts/config --disable CONFIG_PCCARD
+            ./scripts/config --disable CONFIG_ISDN
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+            echo "DEBUG: After first olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+            # Force disable SUNXI_EPHY again after olddefconfig (in case dependencies re-enabled it)
+            ./scripts/config --disable CONFIG_SUNXI_EPHY
+            echo "DEBUG: After second disable, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+            # Run olddefconfig again to ensure config consistency
+            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+            echo "DEBUG: After second olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+            # Final check - if SUNXI_EPHY got re-enabled, fail with clear error
+            if grep -q "^CONFIG_SUNXI_EPHY=y" .config; then
+              echo "ERROR: CONFIG_SUNXI_EPHY is still enabled despite our disables!"
+              echo "This is likely due to a Kconfig 'select' statement from another config."
+              echo "Checking what might be selecting it:"
+              grep -E "CONFIG_.*EXT_PHY|CONFIG_.*AC200|CONFIG_.*SUNXI.*=" .config | head -20
+              exit 1
+            fi
+
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
             
             cp arch/arm64/boot/Image /tmp/downloads/

@@ -115,8 +115,52 @@ jobs:
           tar -czf ${{ github.workspace }}/artifacts/modules.tar.gz -C modules_install .
           
           # Download Mali driver
+          echo "Downloading Mali GPU driver..."
           wget -O ${{ github.workspace }}/artifacts/libmali.so \
-            https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
+            https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so || {
+            echo "ERROR: Failed to download Mali driver"
+            exit 1
+          }
+
+          # Calculate checksum of downloaded file
+          DOWNLOADED_CHECKSUM=$(sha256sum ${{ github.workspace }}/artifacts/libmali.so | awk '{print $1}')
+          echo "Downloaded Mali driver checksum: $DOWNLOADED_CHECKSUM"
+
+          # Read expected checksum from repo (if exists)
+          CHECKSUM_FILE="${{ github.workspace }}/checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
+          if [ -f "$CHECKSUM_FILE" ]; then
+            EXPECTED_CHECKSUM=$(grep -v '^#' "$CHECKSUM_FILE" | grep -v '^[[:space:]]*$' | awk '{print $1}' | head -1)
+
+            if [ -n "$EXPECTED_CHECKSUM" ]; then
+              echo "Expected checksum: $EXPECTED_CHECKSUM"
+
+              if [ "$DOWNLOADED_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+                echo "✓ Checksum verification PASSED - Mali driver integrity confirmed"
+              else
+                echo "✗ Checksum verification FAILED!"
+                echo "  Expected: $EXPECTED_CHECKSUM"
+                echo "  Got:      $DOWNLOADED_CHECKSUM"
+                echo ""
+                echo "SECURITY WARNING: Mali driver checksum mismatch!"
+                echo "This could indicate:"
+                echo "  1. LibreELEC updated the driver (verify if intentional)"
+                echo "  2. Supply chain compromise (investigate immediately)"
+                echo "  3. Network/download corruption"
+                echo ""
+                echo "To update the expected checksum (only if verified legitimate):"
+                echo "  Update checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
+                exit 1
+              fi
+            else
+              echo "⚠ WARNING: No checksum configured in $CHECKSUM_FILE"
+              echo "⚠ Supply chain verification is DISABLED"
+              echo "⚠ Add this checksum to $CHECKSUM_FILE to enable verification:"
+              echo "$DOWNLOADED_CHECKSUM  libmali-bifrost-g31-r16p0-gbm.so"
+            fi
+          else
+            echo "⚠ WARNING: Checksum file not found: $CHECKSUM_FILE"
+            echo "⚠ Current checksum: $DOWNLOADED_CHECKSUM"
+          fi
 
       - name: Generate metadata
         run: |
