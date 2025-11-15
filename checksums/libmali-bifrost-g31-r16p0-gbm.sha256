@@ -1,0 +1,16 @@
+# SHA256 checksum for Mali G31 GPU driver (libmali-bifrost-g31-r16p0-gbm.so)
+# Source: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
+#
+# This checksum is verified on every build to ensure supply chain integrity.
+# If this verification fails, the build will abort.
+#
+# To update this checksum (only if LibreELEC releases a new version):
+# 1. Download the new binary in a build
+# 2. Get the checksum from build logs
+# 3. Update this file with the new checksum
+# 4. Commit with explanation of why checksum changed
+#
+# Format: <checksum> <filename>
+# Leave empty or comment out to disable verification (not recommended)
+
+85ded58f57e068920a8309e658989fd64e035121016e9ba2177bef81aba5d05f  libmali-bifrost-g31-r16p0-gbm.so
