@@ -284,20 +284,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get current date
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/use-prebuilt-binaries'
+        id: date
+        run: echo "date=$(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_OUTPUT
+
       - name: Create Component Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/use-prebuilt-binaries'
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: components-${{ github.sha }}
-          name: Components Build ${{ github.sha }} ($(date +'%Y-%m-%d %H:%M'))
+          name: Components Build ${{ github.sha }} (${{ steps.date.outputs.date }})
           prerelease: false
           files: artifacts/*
           body: |
             ## Pre-built Components for Orange Pi Zero 2W
-            
+
             Git Commit: ${{ github.sha }}
-            Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            Build Date: ${{ steps.date.outputs.date }}
             
             ### Components:
             - U-Boot with SPL
