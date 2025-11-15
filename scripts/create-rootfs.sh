@@ -62,6 +62,8 @@ sudo tar -xpf "$ARCH_TARBALL" -C "$OUTPUT"
 
 # Install kernel modules
 echo "Installing kernel modules..."
+# Remove Arch Linux's kernel modules first (we provide our own custom kernel)
+sudo rm -rf "$OUTPUT/lib/modules"
 sudo mkdir -p "$OUTPUT/lib/modules"
 # Extract modules tarball to temporary location
 TEMP_MODULES="/tmp/kernel-modules-extract"
@@ -172,6 +174,24 @@ sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
 echo "Setting root password..."
 echo 'root:orangepi' | sudo chroot "$OUTPUT" chpasswd
 
+# CRITICAL: Remove ALL firmware except what Orange Pi Zero 2W actually needs
+# Orange Pi Zero 2W uses:
+# - Realtek or Broadcom WiFi/BT (rtl* or brcm*)
+# - Allwinner-specific firmware
+# Remove 500+MB of unnecessary firmware for other devices
+# This applies to ALL variants to save space
+if [ -d "$OUTPUT/usr/lib/firmware" ]; then
+  echo "Removing unnecessary firmware (keeping only Realtek/Broadcom/Allwinner)..."
+  cd "$OUTPUT/usr/lib/firmware"
+  # Keep only what we need, remove everything else
+  sudo find . -mindepth 1 -maxdepth 1 \
+    ! -name 'rtl*' \
+    ! -name 'brcm*' \
+    ! -name 'regulatory.db*' \
+    -exec rm -rf {} +
+  cd - > /dev/null
+fi
+
 # Clean up based on variant
 if [ "$VARIANT" = "runtime" ]; then
   echo "Cleaning up for runtime edition (aggressive minimal system)..."
@@ -202,23 +222,6 @@ if [ "$VARIANT" = "runtime" ]; then
 
   # Clean up logs
   sudo rm -rf "$OUTPUT/var/log"/*
-
-  # CRITICAL: Remove ALL firmware except what Orange Pi Zero 2W actually needs
-  # Orange Pi Zero 2W uses:
-  # - Realtek or Broadcom WiFi/BT (rtl* or brcm*)
-  # - Allwinner-specific firmware
-  # Remove 500+MB of unnecessary firmware for other devices
-  if [ -d "$OUTPUT/usr/lib/firmware" ]; then
-    echo "Removing unnecessary firmware (keeping only Realtek/Broadcom/Allwinner)..."
-    cd "$OUTPUT/usr/lib/firmware"
-    # Keep only what we need, remove everything else
-    sudo find . -mindepth 1 -maxdepth 1 \
-      ! -name 'rtl*' \
-      ! -name 'brcm*' \
-      ! -name 'regulatory.db*' \
-      -exec rm -rf {} +
-    cd - > /dev/null
-  fi
 
   echo "Runtime cleanup complete - minimal barebones system"
 fi
