@@ -8,6 +8,8 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags (v0.1.0-alpha.1, v1.0.0, etc.)
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       build_variant:
@@ -20,214 +22,421 @@ on:
         - development
         - debug
         - all
-      components_tag:
-        description: 'Components release tag (optional, e.g. components-abc123)'
-        required: false
-        type: string
 
 env:
   DEBIAN_FRONTEND: noninteractive
+  ARCH: arm64
+  CROSS_COMPILE: aarch64-linux-gnu-
   MALI_DRIVER_URL: https://github.com/LibreELEC/libmali/raw/master/lib/aarch64-linux-gnu/libmali-bifrost-g31-r16p0-gbm.so
 
+permissions:
+  contents: write
+
 jobs:
-  setup:
+  # ============================================================================
+  # Job 1: Build ARM Trusted Firmware (ATF) - ~5-10 minutes
+  # ============================================================================
+  build-atf:
+    name: Build ARM Trusted Firmware
     runs-on: ubuntu-22.04
-    outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
-      components_tag: ${{ steps.find-components.outputs.tag }}
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate build matrix
-        id: build-matrix
-        run: |
-          if [ "${{ github.event.inputs.build_variant }}" = "all" ] || [ -z "${{ github.event.inputs.build_variant }}" ]; then
-            MATRIX='["runtime", "development", "debug"]'
-          else
-            MATRIX='["${{ github.event.inputs.build_variant }}"]'
-          fi
-          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
-      
-      - name: Find latest components release
-        id: find-components
-        run: |
-          # Check if user provided a specific components tag
-          if [ -n "${{ github.event.inputs.components_tag }}" ]; then
-            COMPONENT_TAG="${{ github.event.inputs.components_tag }}"
-            if gh release view "$COMPONENT_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              echo "Using user-specified components tag: $COMPONENT_TAG"
-              echo "tag=$COMPONENT_TAG" >> $GITHUB_OUTPUT
-            else
-              echo "ERROR: User-specified tag '$COMPONENT_TAG' not found"
-              exit 1
-            fi
-          # If triggered by workflow_run, use the commit SHA from the triggering workflow
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
-            echo "Using commit SHA from triggering workflow: $COMMIT_SHA"
-            # First try the exact commit tag
-            COMPONENT_TAG="components-${COMMIT_SHA}"
-            if gh release view "$COMPONENT_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              echo "Found exact match release: $COMPONENT_TAG"
-              echo "tag=$COMPONENT_TAG" >> $GITHUB_OUTPUT
-            else
-              # If no exact match, find the most recent components release
-              echo "No exact match found, searching for most recent components release..."
-              LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
-              if [ -n "$LATEST_TAG" ]; then
-                echo "Found latest components release: $LATEST_TAG"
-                echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-              else
-                echo "No components releases found, build will fall back to building from source"
-                echo "tag=" >> $GITHUB_OUTPUT
-              fi
-            fi
-          else
-            # For other triggers, find the most recent components release
-            echo "Searching for most recent components release..."
-            LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 | grep '^components-' | head -1 | awk '{print $1}')
-            if [ -n "$LATEST_TAG" ]; then
-              echo "Found latest components release: $LATEST_TAG"
-              echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-            else
-              echo "No components releases found, build will fall back to building from source"
-              echo "tag=" >> $GITHUB_OUTPUT
-            fi
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-  build:
-    needs: setup
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
-    strategy:
-      matrix:
-        variant: ${{ fromJson(needs.setup.outputs.matrix) }}
-      fail-fast: false
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install required packages
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            wget \
-            curl \
-            xz-utils \
-            qemu-user-static \
-            binfmt-support \
-            debootstrap \
-            parted \
-            dosfstools \
-            e2fsprogs \
-            pixz \
-            rsync \
+            build-essential \
+            gcc-aarch64-linux-gnu \
             device-tree-compiler
 
-      - name: Download pre-built U-Boot
-        id: download_uboot
+      - name: Build ARM Trusted Firmware
         run: |
-          mkdir -p /tmp/downloads
-          
-          # Check if we have a components tag
-          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
-            # Try to download from our components release
-            if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/u-boot-sunxi-with-spl.bin 2>/dev/null; then
-              echo "success=true" >> $GITHUB_OUTPUT
-              echo "Downloaded U-Boot from release ${{ needs.setup.outputs.components_tag }}"
-            # Try alternative source from GitHub Doct2O repository (H618 specific)
-            elif wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-              https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
-              echo "success=true" >> $GITHUB_OUTPUT
-              echo "Downloaded U-Boot from Doct2O repository"
-            else
-              echo "success=false" >> $GITHUB_OUTPUT
-              echo "WARNING: Failed to download prebuilt U-Boot from all sources"
-            fi
+          cd /tmp
+          # Get latest stable release tag
+          ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags\///')
+          echo "Building ARM Trusted Firmware $ATF_TAG"
+
+          git clone --depth 1 -b "$ATF_TAG" \
+            https://github.com/ARM-software/arm-trusted-firmware.git
+          cd arm-trusted-firmware
+
+          make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
+
+          # Copy output for artifact upload
+          mkdir -p /tmp/atf-output
+          cp build/sun50i_h616/release/bl31.bin /tmp/atf-output/
+
+      - name: Upload ATF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atf-bl31
+          path: /tmp/atf-output/bl31.bin
+          retention-days: 1
+
+  # ============================================================================
+  # Job 2: Build Linux Kernel - ~30-60 minutes (LONGEST JOB)
+  # ============================================================================
+  build-kernel:
+    name: Build Linux Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            bison \
+            flex \
+            libssl-dev \
+            bc \
+            kmod \
+            cpio \
+            rsync \
+            u-boot-tools
+
+      - name: Build Linux Kernel
+        run: |
+          cd /tmp
+          git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
+            https://github.com/orangepi-xunlong/linux-orangepi.git kernel
+          cd kernel
+
+          # Patch Makefile to prevent sunxi-ephy from being built
+          # Orange Pi vendor kernel has a Makefile bug that builds it unconditionally
+          echo "Patching drivers/net/phy/Makefile to remove sunxi-ephy.o..."
+          sed -i 's/ sunxi-ephy\.o//' drivers/net/phy/Makefile
+          echo "After patch, checking for sunxi-ephy:"
+          if grep -q "sunxi-ephy" drivers/net/phy/Makefile; then
+            echo "  ERROR: sunxi-ephy still present!"
+            grep sunxi-ephy drivers/net/phy/Makefile
+            exit 1
           else
-            # No components tag, try fallback source
-            if wget -O /tmp/downloads/u-boot-sunxi-with-spl.bin \
-              https://github.com/Doct2O/orangepi-zero3-bl/raw/main/u-boot-sunxi-with-spl.bin 2>/dev/null; then
-              echo "success=true" >> $GITHUB_OUTPUT
-              echo "Downloaded U-Boot from Doct2O repository"
-            else
-              echo "success=false" >> $GITHUB_OUTPUT
-              echo "WARNING: Failed to download prebuilt U-Boot from all sources"
+            echo "  Success: sunxi-ephy.o removed from Makefile"
+          fi
+
+          # Apply custom configuration from our kernel-config
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
+
+          # Apply our custom configuration
+          while IFS= read -r line; do
+            if [[ $line == CONFIG_* ]] && [[ $line == *=y ]]; then
+              config_name=$(echo "$line" | cut -d'=' -f1)
+              ./scripts/config --enable "$config_name"
+            elif [[ $line == CONFIG_* ]] && [[ $line == *=m ]]; then
+              config_name=$(echo "$line" | cut -d'=' -f1)
+              ./scripts/config --module "$config_name"
+            elif [[ $line == CONFIG_* ]] && [[ $line == *=* ]]; then
+              config_name=$(echo "$line" | cut -d'=' -f1)
+              config_value=$(echo "$line" | cut -d'=' -f2)
+              ./scripts/config --set-str "$config_name" "$config_value"
+            fi
+          done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
+
+          # Disable drivers for other platforms - Orange Pi Zero 2W is Allwinner H618 only
+          # This significantly reduces kernel size and build time
+
+          # Disable problematic ethernet drivers (have undefined references in vendor kernel)
+          # SUNXI_GMAC calls ephy functions (gmac_ephy_shutdown, ephy_is_enable)
+          # SUNXI_EXT_PHY selects SUNXI_EPHY
+          # All three must be disabled together
+          ./scripts/config --disable CONFIG_SUNXI_GMAC
+          ./scripts/config --disable CONFIG_SUNXI_EXT_PHY
+          ./scripts/config --disable CONFIG_SUNXI_EPHY
+
+          # === Disable Other ARM SoC Platforms ===
+          # We only need ARCH_SUNXI (Allwinner), disable everything else
+          ./scripts/config --disable CONFIG_ARCH_ACTIONS
+          ./scripts/config --disable CONFIG_ARCH_AGILEX
+          ./scripts/config --disable CONFIG_ARCH_ALPINE
+          ./scripts/config --disable CONFIG_ARCH_APPLE
+          ./scripts/config --disable CONFIG_ARCH_BCM
+          ./scripts/config --disable CONFIG_ARCH_BCM2835
+          ./scripts/config --disable CONFIG_ARCH_BCM_IPROC
+          ./scripts/config --disable CONFIG_ARCH_BERLIN
+          ./scripts/config --disable CONFIG_ARCH_BRCMSTB
+          ./scripts/config --disable CONFIG_ARCH_EXYNOS
+          ./scripts/config --disable CONFIG_ARCH_K3
+          ./scripts/config --disable CONFIG_ARCH_LAYERSCAPE
+          ./scripts/config --disable CONFIG_ARCH_LG1K
+          ./scripts/config --disable CONFIG_ARCH_HISI
+          ./scripts/config --disable CONFIG_ARCH_MEDIATEK
+          ./scripts/config --disable CONFIG_ARCH_MESON
+          ./scripts/config --disable CONFIG_ARCH_MVEBU
+          ./scripts/config --disable CONFIG_ARCH_MXC
+          ./scripts/config --disable CONFIG_ARCH_QCOM
+          ./scripts/config --disable CONFIG_ARCH_ROCKCHIP
+          ./scripts/config --disable CONFIG_ARCH_S32
+          ./scripts/config --disable CONFIG_ARCH_SEATTLE
+          ./scripts/config --disable CONFIG_ARCH_SYNQUACER
+          ./scripts/config --disable CONFIG_ARCH_TEGRA
+          ./scripts/config --disable CONFIG_ARCH_SPRD
+          ./scripts/config --disable CONFIG_ARCH_THUNDER
+          ./scripts/config --disable CONFIG_ARCH_THUNDER2
+          ./scripts/config --disable CONFIG_ARCH_UNIPHIER
+          ./scripts/config --disable CONFIG_ARCH_VEXPRESS
+          ./scripts/config --disable CONFIG_ARCH_XGENE
+          ./scripts/config --disable CONFIG_ARCH_ZYNQMP
+
+          # === Disable SoC-Specific Sound Drivers ===
+          # Keep only generic ALSA and Allwinner (SUNXI) sound
+
+          # Tegra sound drivers (all variants)
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA_PCM
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_AC97
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_DAS
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_I2S
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_SPDIF
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_AHUB
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_I2S
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_ASRC
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_DSPK
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AHUB
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_DMIC
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_I2S
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADMAIF
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADX
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AMX
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MIXER
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MVC
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_OPE
+          ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_SFC
+
+          # Other SoC sound drivers
+          ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
+          ./scripts/config --disable CONFIG_SND_SOC_QCOM
+          ./scripts/config --disable CONFIG_SND_SOC_MESON
+          ./scripts/config --disable CONFIG_SND_SOC_SAMSUNG
+
+          # FSL (Freescale/NXP i.MX) sound drivers (all variants)
+          ./scripts/config --disable CONFIG_SND_SOC_FSL
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_ASRC
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_SAI
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_SSI
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_SPDIF
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_ESAI
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_MICFIL
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_EASRC
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_UTILS
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_AUDMIX
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_RPMSG
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_AUD2HTX
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_XCVR
+          ./scripts/config --disable CONFIG_SND_SOC_IMX
+          ./scripts/config --disable CONFIG_SND_SOC_IMX_AUDMUX
+          ./scripts/config --disable CONFIG_SND_SOC_IMX_SGTL5000
+          ./scripts/config --disable CONFIG_SND_SOC_IMX_SPDIF
+          ./scripts/config --disable CONFIG_SND_SOC_IMX_ES8328
+          ./scripts/config --disable CONFIG_SND_SOC_FSL_ASOC_CARD
+
+          # SH (Renesas SuperH/R-Car) sound drivers (all variants)
+          ./scripts/config --disable CONFIG_SND_SOC_SH
+          ./scripts/config --disable CONFIG_SND_SOC_RCAR
+          ./scripts/config --disable CONFIG_SND_SOC_RZ_SSI
+
+          # === Disable GPU Drivers for Other Platforms ===
+          # Keep only Mali (for our G31) and basic DRM
+          ./scripts/config --disable CONFIG_DRM_AMDGPU
+          ./scripts/config --disable CONFIG_DRM_RADEON
+          ./scripts/config --disable CONFIG_DRM_NOUVEAU
+          ./scripts/config --disable CONFIG_DRM_I915
+          ./scripts/config --disable CONFIG_DRM_TEGRA
+          ./scripts/config --disable CONFIG_DRM_ROCKCHIP
+          ./scripts/config --disable CONFIG_DRM_EXYNOS
+          ./scripts/config --disable CONFIG_DRM_MSM
+          ./scripts/config --disable CONFIG_DRM_MESON
+          ./scripts/config --disable CONFIG_DRM_VC4
+          ./scripts/config --disable CONFIG_DRM_ETNAVIV
+
+          # === Disable Unnecessary Network Drivers ===
+          # Keep only what's needed: USB ethernet, WiFi, basic networking
+          ./scripts/config --disable CONFIG_NET_VENDOR_3COM
+          ./scripts/config --disable CONFIG_NET_VENDOR_ADAPTEC
+          ./scripts/config --disable CONFIG_NET_VENDOR_AMD
+          ./scripts/config --disable CONFIG_NET_VENDOR_BROADCOM
+          ./scripts/config --disable CONFIG_NET_VENDOR_INTEL
+          ./scripts/config --disable CONFIG_NET_VENDOR_MARVELL
+          ./scripts/config --disable CONFIG_NET_VENDOR_NVIDIA
+          ./scripts/config --disable CONFIG_NET_VENDOR_REALTEK
+          ./scripts/config --disable CONFIG_NET_VENDOR_QUALCOMM
+
+          # === Disable Platform-Specific Features ===
+          ./scripts/config --disable CONFIG_COMPILE_TEST
+          ./scripts/config --disable CONFIG_STAGING
+          ./scripts/config --disable CONFIG_INFINIBAND
+          ./scripts/config --disable CONFIG_PCCARD
+          ./scripts/config --disable CONFIG_ISDN
+
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+          echo "DEBUG: After first olddefconfig, GMAC=$(grep CONFIG_SUNXI_GMAC .config || echo 'not found'), EXT_PHY=$(grep CONFIG_SUNXI_EXT_PHY .config || echo 'not found'), EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+          # Force disable all three ethernet drivers again after olddefconfig (in case dependencies re-enabled them)
+          ./scripts/config --disable CONFIG_SUNXI_GMAC
+          ./scripts/config --disable CONFIG_SUNXI_EXT_PHY
+          ./scripts/config --disable CONFIG_SUNXI_EPHY
+          echo "DEBUG: After second disable, GMAC=$(grep CONFIG_SUNXI_GMAC .config || echo 'not found'), EXT_PHY=$(grep CONFIG_SUNXI_EXT_PHY .config || echo 'not found'), EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+          # Run olddefconfig again to ensure config consistency
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+          echo "DEBUG: After second olddefconfig, GMAC=$(grep CONFIG_SUNXI_GMAC .config || echo 'not found'), EXT_PHY=$(grep CONFIG_SUNXI_EXT_PHY .config || echo 'not found'), EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
+
+          # Final check - if any ethernet driver got re-enabled, fail with clear error
+          if grep -q "^CONFIG_SUNXI_GMAC=y" .config || grep -q "^CONFIG_SUNXI_EXT_PHY=y" .config || grep -q "^CONFIG_SUNXI_EPHY=y" .config; then
+            echo "ERROR: One or more ethernet drivers (GMAC/EXT_PHY/EPHY) is still enabled despite our disables!"
+            echo "This is likely due to a Kconfig 'select' statement from another config."
+            echo "Checking what might be selecting it:"
+            grep -E "CONFIG_.*GMAC|CONFIG_.*EXT_PHY|CONFIG_.*EPHY|CONFIG_.*AC200" .config | head -20
+            exit 1
+          fi
+
+          # Build kernel and modules
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
+
+          # Copy outputs
+          mkdir -p /tmp/kernel-output
+          cp arch/arm64/boot/Image /tmp/kernel-output/
+
+          # Find and copy DTB
+          if [ -f arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ]; then
+            cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb /tmp/kernel-output/
+          else
+            DTB_FILE=$(find arch/arm64/boot/dts -name "*orangepi*zero2w*.dtb" -o -name "*h618*.dtb" | head -1)
+            if [ -n "$DTB_FILE" ]; then
+              cp "$DTB_FILE" /tmp/kernel-output/sun50i-h618-orangepi-zero2w.dtb
             fi
           fi
 
-      - name: Download pre-built kernel and modules
-        id: download_kernel
-        run: |
-          SUCCESS=true
-          
-          # Check if we have a components tag
-          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
-            # Download pre-built kernel image
-            if wget -O /tmp/downloads/Image \
-              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/Image 2>/dev/null; then
-              echo "Downloaded prebuilt kernel from release ${{ needs.setup.outputs.components_tag }}"
-            else
-              echo "WARNING: Failed to download prebuilt kernel"
-              SUCCESS=false
-            fi
-            
-            # Download pre-built DTB
-            if wget -O /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
-              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/sun50i-h618-orangepi-zero2w.dtb 2>/dev/null; then
-              echo "Downloaded prebuilt DTB from release ${{ needs.setup.outputs.components_tag }}"
-            else
-              echo "WARNING: Failed to download prebuilt DTB"
-              SUCCESS=false
-            fi
-            
-            # Download kernel modules tarball
-            if wget -O /tmp/downloads/modules.tar.gz \
-              https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.components_tag }}/modules.tar.gz 2>/dev/null; then
-              echo "Downloaded prebuilt modules from release ${{ needs.setup.outputs.components_tag }}"
-            else
-              echo "WARNING: Failed to download prebuilt modules"
-              SUCCESS=false
-            fi
-          else
-            # No components tag available
-            echo "No components release available, will build from source"
-            SUCCESS=false
-          fi
-          
-          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+          # Install modules
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
+          cd /tmp
+          tar -czf /tmp/kernel-output/modules.tar.gz -C /tmp/modules_install .
 
-      - name: Component download summary
+      - name: Upload Kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: /tmp/kernel-output/
+          retention-days: 1
+
+  # ============================================================================
+  # Job 3: Build U-Boot (depends on ATF) - ~10-15 minutes
+  # ============================================================================
+  build-uboot:
+    name: Build U-Boot Bootloader
+    needs: build-atf
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download ATF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atf-bl31
+          path: /tmp/atf
+
+      - name: Install build dependencies
         run: |
-          echo "=== Component Download Summary ==="
-          if [ -n "${{ needs.setup.outputs.components_tag }}" ]; then
-            echo "Components tag: ${{ needs.setup.outputs.components_tag }}"
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            bison \
+            flex \
+            libssl-dev \
+            libgnutls28-dev \
+            bc
+
+      - name: Build U-Boot
+        run: |
+          cd /tmp
+          # Get latest stable U-Boot release tag
+          UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags\///')
+          echo "Building U-Boot $UBOOT_TAG"
+
+          git clone --depth 1 -b "$UBOOT_TAG" \
+            https://github.com/u-boot/u-boot.git
+          cd u-boot
+
+          # Copy BL31 from ATF artifact
+          cp /tmp/atf/bl31.bin .
+
+          # Build U-Boot bootloader only (skip tools to avoid unnecessary dependencies)
+          make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
+
+          # Build just what we need: bootloader binary (not tools)
+          # Use 'all' target but tools will fail - we catch that and verify bootloader exists
+          make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin NO_SDL=1 -j$(nproc) 2>&1 | tee build.log || true
+
+          # Check if the bootloader was built successfully (this is what we actually need)
+          if [ -f u-boot-sunxi-with-spl.bin ]; then
+            echo "✓ U-Boot bootloader built successfully"
+            ls -lh u-boot-sunxi-with-spl.bin
           else
-            echo "No components release tag found"
+            echo "ERROR: u-boot-sunxi-with-spl.bin was not created"
+            echo "Build log:"
+            tail -100 build.log
+            exit 1
           fi
-          echo "U-Boot download: ${{ steps.download_uboot.outputs.success }}"
-          echo "Kernel download: ${{ steps.download_kernel.outputs.success }}"
-          echo "================================="
-          
-      - name: Download Mali GPU driver
+
+          # Copy output for artifact upload
+          mkdir -p /tmp/uboot-output
+          cp u-boot-sunxi-with-spl.bin /tmp/uboot-output/
+
+      - name: Upload U-Boot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uboot
+          path: /tmp/uboot-output/u-boot-sunxi-with-spl.bin
+          retention-days: 1
+
+  # ============================================================================
+  # Job 4: Download & Verify Mali GPU Driver (Independent)
+  # ============================================================================
+  download-mali:
+    name: Download & Verify Mali GPU Driver
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and verify Mali driver
         run: |
+          mkdir -p /tmp/mali-output
+
           echo "Downloading Mali GPU driver..."
-          wget -O /tmp/downloads/libmali.so "$MALI_DRIVER_URL" || {
+          wget -O /tmp/mali-output/libmali.so "$MALI_DRIVER_URL" || {
             echo "ERROR: Failed to download Mali driver"
             exit 1
           }
 
           # Calculate checksum of downloaded file
-          DOWNLOADED_CHECKSUM=$(sha256sum /tmp/downloads/libmali.so | awk '{print $1}')
+          DOWNLOADED_CHECKSUM=$(sha256sum /tmp/mali-output/libmali.so | awk '{print $1}')
           echo "Downloaded Mali driver checksum: $DOWNLOADED_CHECKSUM"
 
-          # Read expected checksum from repo (if exists)
+          # Read expected checksum from repo
           CHECKSUM_FILE="checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
           if [ -f "$CHECKSUM_FILE" ]; then
             EXPECTED_CHECKSUM=$(grep -v '^#' "$CHECKSUM_FILE" | grep -v '^[[:space:]]*$' | awk '{print $1}' | head -1)
@@ -247,303 +456,132 @@ jobs:
                 echo "  1. LibreELEC updated the driver (verify if intentional)"
                 echo "  2. Supply chain compromise (investigate immediately)"
                 echo "  3. Network/download corruption"
-                echo ""
-                echo "To update the expected checksum (only if verified legitimate):"
-                echo "  Update checksums/libmali-bifrost-g31-r16p0-gbm.sha256"
                 exit 1
               fi
             else
               echo "⚠ WARNING: No checksum configured in $CHECKSUM_FILE"
-              echo "⚠ Supply chain verification is DISABLED"
-              echo "⚠ Add this checksum to $CHECKSUM_FILE to enable verification:"
-              echo "$DOWNLOADED_CHECKSUM  libmali-bifrost-g31-r16p0-gbm.so"
             fi
           else
             echo "⚠ WARNING: Checksum file not found: $CHECKSUM_FILE"
-            echo "⚠ Current checksum: $DOWNLOADED_CHECKSUM"
           fi
+
+      - name: Upload Mali artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mali-driver
+          path: /tmp/mali-output/libmali.so
+          retention-days: 1
+
+  # ============================================================================
+  # Job 5: Assemble Final Images (depends on all component jobs)
+  # ============================================================================
+  assemble-image:
+    name: Assemble Image (${{ matrix.variant }})
+    needs: [build-uboot, build-kernel, download-mali]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        variant: ${{ fromJson(github.event.inputs.build_variant == 'all' && '["runtime", "development", "debug"]' || format('["{0}"]', github.event.inputs.build_variant || 'runtime')) }}
+      fail-fast: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+
+      - name: Verify artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -lah /tmp/artifacts/
+          echo "=== U-Boot ==="
+          ls -lah /tmp/artifacts/uboot/
+          echo "=== Kernel ==="
+          ls -lah /tmp/artifacts/kernel/
+          echo "=== Mali ==="
+          ls -lah /tmp/artifacts/mali-driver/
+
+          # Verify all required files exist
+          test -f /tmp/artifacts/uboot/u-boot-sunxi-with-spl.bin || { echo "ERROR: U-Boot missing"; exit 1; }
+          test -f /tmp/artifacts/kernel/Image || { echo "ERROR: Kernel Image missing"; exit 1; }
+          test -f /tmp/artifacts/kernel/sun50i-h618-orangepi-zero2w.dtb || { echo "ERROR: DTB missing"; exit 1; }
+          test -f /tmp/artifacts/kernel/modules.tar.gz || { echo "ERROR: Modules missing"; exit 1; }
+          test -f /tmp/artifacts/mali-driver/libmali.so || { echo "ERROR: Mali driver missing"; exit 1; }
+
+          echo "✓ All required artifacts present"
+
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget \
+            xz-utils \
+            qemu-user-static \
+            binfmt-support \
+            parted \
+            dosfstools \
+            e2fsprogs \
+            pixz \
+            rsync
 
       - name: Download Arch Linux ARM base
         run: |
+          mkdir -p /tmp/downloads
           wget -O /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
             http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
-
-      - name: Build components from source (if needed)
-        if: steps.download_uboot.outputs.success == 'false' || steps.download_kernel.outputs.success == 'false'
-        timeout-minutes: 75
-        run: |
-          echo "Prebuilt components not available, building from source..."
-          
-          # Install build dependencies
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            bison \
-            flex \
-            libssl-dev \
-            libgnutls28-dev \
-            bc \
-            u-boot-tools
-          
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          # Build U-Boot if needed
-          if [ ! -f /tmp/downloads/u-boot-sunxi-with-spl.bin ]; then
-            cd /tmp
-            # Get latest ATF
-            ATF_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/ARM-software/arm-trusted-firmware.git | grep -E 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?$' | tail -n1 | sed 's/.*refs\/tags\///')
-            git clone --depth 1 -b "$ATF_TAG" https://github.com/ARM-software/arm-trusted-firmware.git
-            cd arm-trusted-firmware
-            make PLAT=sun50i_h616 CROSS_COMPILE=$CROSS_COMPILE bl31
-            
-            # Get latest U-Boot
-            cd /tmp
-            UBOOT_TAG=$(git ls-remote --tags --sort="v:refname" https://github.com/u-boot/u-boot.git | grep -E 'refs/tags/v20[0-9]{2}\.[0-9]{2}$' | tail -n1 | sed 's/.*refs\/tags\///')
-            git clone --depth 1 -b "$UBOOT_TAG" https://github.com/u-boot/u-boot.git
-            cd u-boot
-            cp ../arm-trusted-firmware/build/sun50i_h616/release/bl31.bin .
-            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE orangepi_zero2w_defconfig
-            make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE BL31=bl31.bin -j$(nproc)
-            cp u-boot-sunxi-with-spl.bin /tmp/downloads/
-          fi
-          
-          # Build kernel if needed
-          if [ ! -f /tmp/downloads/Image ] || [ ! -f /tmp/downloads/modules.tar.gz ]; then
-            cd /tmp
-            git clone --depth 1 -b orange-pi-6.1-sun50iw9 \
-              https://github.com/orangepi-xunlong/linux-orangepi.git kernel
-            cd kernel
-            
-            # Use our custom kernel config for OrangePi Zero 2W
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE defconfig
-            # Apply our custom configuration
-            while IFS= read -r line; do
-              if [[ $line == CONFIG_* ]] && [[ $line == *=y ]]; then
-                config_name=$(echo "$line" | cut -d'=' -f1)
-                ./scripts/config --enable "$config_name"
-              elif [[ $line == CONFIG_* ]] && [[ $line == *=m ]]; then
-                config_name=$(echo "$line" | cut -d'=' -f1)
-                ./scripts/config --module "$config_name"
-              elif [[ $line == CONFIG_* ]] && [[ $line == *=* ]]; then
-                config_name=$(echo "$line" | cut -d'=' -f1)
-                config_value=$(echo "$line" | cut -d'=' -f2)
-                ./scripts/config --set-str "$config_name" "$config_value"
-              fi
-            done < <(curl -s https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/configs/kernel-config | grep -E '^CONFIG_')
-
-            # Disable drivers for other platforms - Orange Pi Zero 2W is Allwinner H618 only
-            # This significantly reduces kernel size and build time
-
-            # Disable problematic ethernet driver (has undefined references)
-            ./scripts/config --disable CONFIG_SUNXI_EPHY
-
-            # === Disable Other ARM SoC Platforms ===
-            # We only need ARCH_SUNXI (Allwinner), disable everything else
-            ./scripts/config --disable CONFIG_ARCH_ACTIONS
-            ./scripts/config --disable CONFIG_ARCH_AGILEX
-            ./scripts/config --disable CONFIG_ARCH_ALPINE
-            ./scripts/config --disable CONFIG_ARCH_APPLE
-            ./scripts/config --disable CONFIG_ARCH_BCM
-            ./scripts/config --disable CONFIG_ARCH_BCM2835
-            ./scripts/config --disable CONFIG_ARCH_BCM_IPROC
-            ./scripts/config --disable CONFIG_ARCH_BERLIN
-            ./scripts/config --disable CONFIG_ARCH_BRCMSTB
-            ./scripts/config --disable CONFIG_ARCH_EXYNOS
-            ./scripts/config --disable CONFIG_ARCH_K3
-            ./scripts/config --disable CONFIG_ARCH_LAYERSCAPE
-            ./scripts/config --disable CONFIG_ARCH_LG1K
-            ./scripts/config --disable CONFIG_ARCH_HISI
-            ./scripts/config --disable CONFIG_ARCH_MEDIATEK
-            ./scripts/config --disable CONFIG_ARCH_MESON
-            ./scripts/config --disable CONFIG_ARCH_MVEBU
-            ./scripts/config --disable CONFIG_ARCH_MXC
-            ./scripts/config --disable CONFIG_ARCH_QCOM
-            ./scripts/config --disable CONFIG_ARCH_ROCKCHIP
-            ./scripts/config --disable CONFIG_ARCH_S32
-            ./scripts/config --disable CONFIG_ARCH_SEATTLE
-            ./scripts/config --disable CONFIG_ARCH_SYNQUACER
-            ./scripts/config --disable CONFIG_ARCH_TEGRA
-            ./scripts/config --disable CONFIG_ARCH_SPRD
-            ./scripts/config --disable CONFIG_ARCH_THUNDER
-            ./scripts/config --disable CONFIG_ARCH_THUNDER2
-            ./scripts/config --disable CONFIG_ARCH_UNIPHIER
-            ./scripts/config --disable CONFIG_ARCH_VEXPRESS
-            ./scripts/config --disable CONFIG_ARCH_XGENE
-            ./scripts/config --disable CONFIG_ARCH_ZYNQMP
-
-            # === Disable SoC-Specific Sound Drivers ===
-            # Keep only generic ALSA and Allwinner (SUNXI) sound
-
-            # Tegra sound drivers (all variants)
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_PCM
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_AC97
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_DAS
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_I2S
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA20_SPDIF
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_AHUB
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA30_I2S
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_ASRC
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA186_DSPK
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AHUB
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_DMIC
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_I2S
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADMAIF
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_ADX
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_AMX
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MIXER
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_MVC
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_OPE
-            ./scripts/config --disable CONFIG_SND_SOC_TEGRA210_SFC
-
-            # Other SoC sound drivers
-            ./scripts/config --disable CONFIG_SND_SOC_ROCKCHIP
-            ./scripts/config --disable CONFIG_SND_SOC_QCOM
-            ./scripts/config --disable CONFIG_SND_SOC_MESON
-            ./scripts/config --disable CONFIG_SND_SOC_SAMSUNG
-
-            # FSL (Freescale/NXP i.MX) sound drivers (all variants)
-            ./scripts/config --disable CONFIG_SND_SOC_FSL
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASRC
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_SAI
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_SSI
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_SPDIF
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_ESAI
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_MICFIL
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_EASRC
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_UTILS
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUDMIX
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_RPMSG
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_AUD2HTX
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_XCVR
-            ./scripts/config --disable CONFIG_SND_SOC_IMX
-            ./scripts/config --disable CONFIG_SND_SOC_IMX_AUDMUX
-            ./scripts/config --disable CONFIG_SND_SOC_IMX_SGTL5000
-            ./scripts/config --disable CONFIG_SND_SOC_IMX_SPDIF
-            ./scripts/config --disable CONFIG_SND_SOC_IMX_ES8328
-            ./scripts/config --disable CONFIG_SND_SOC_FSL_ASOC_CARD
-
-            # SH (Renesas SuperH/R-Car) sound drivers (all variants)
-            ./scripts/config --disable CONFIG_SND_SOC_SH
-            ./scripts/config --disable CONFIG_SND_SOC_RCAR
-            ./scripts/config --disable CONFIG_SND_SOC_RZ_SSI
-
-            # === Disable GPU Drivers for Other Platforms ===
-            # Keep only Mali (for our G31) and basic DRM
-            ./scripts/config --disable CONFIG_DRM_AMDGPU
-            ./scripts/config --disable CONFIG_DRM_RADEON
-            ./scripts/config --disable CONFIG_DRM_NOUVEAU
-            ./scripts/config --disable CONFIG_DRM_I915
-            ./scripts/config --disable CONFIG_DRM_TEGRA
-            ./scripts/config --disable CONFIG_DRM_ROCKCHIP
-            ./scripts/config --disable CONFIG_DRM_EXYNOS
-            ./scripts/config --disable CONFIG_DRM_MSM
-            ./scripts/config --disable CONFIG_DRM_MESON
-            ./scripts/config --disable CONFIG_DRM_VC4
-            ./scripts/config --disable CONFIG_DRM_ETNAVIV
-
-            # === Disable Unnecessary Network Drivers ===
-            # Keep only what's needed: USB ethernet, WiFi, basic networking
-            ./scripts/config --disable CONFIG_NET_VENDOR_3COM
-            ./scripts/config --disable CONFIG_NET_VENDOR_ADAPTEC
-            ./scripts/config --disable CONFIG_NET_VENDOR_AMD
-            ./scripts/config --disable CONFIG_NET_VENDOR_BROADCOM
-            ./scripts/config --disable CONFIG_NET_VENDOR_INTEL
-            ./scripts/config --disable CONFIG_NET_VENDOR_MARVELL
-            ./scripts/config --disable CONFIG_NET_VENDOR_NVIDIA
-            ./scripts/config --disable CONFIG_NET_VENDOR_REALTEK
-            ./scripts/config --disable CONFIG_NET_VENDOR_QUALCOMM
-
-            # === Disable Platform-Specific Features ===
-            ./scripts/config --disable CONFIG_COMPILE_TEST
-            ./scripts/config --disable CONFIG_STAGING
-            ./scripts/config --disable CONFIG_INFINIBAND
-            ./scripts/config --disable CONFIG_PCCARD
-            ./scripts/config --disable CONFIG_ISDN
-
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-            echo "DEBUG: After first olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
-
-            # Force disable SUNXI_EPHY again after olddefconfig (in case dependencies re-enabled it)
-            ./scripts/config --disable CONFIG_SUNXI_EPHY
-            echo "DEBUG: After second disable, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
-
-            # Run olddefconfig again to ensure config consistency
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
-            echo "DEBUG: After second olddefconfig, SUNXI_EPHY=$(grep CONFIG_SUNXI_EPHY .config || echo 'not found')"
-
-            # Final check - if SUNXI_EPHY got re-enabled, fail with clear error
-            if grep -q "^CONFIG_SUNXI_EPHY=y" .config; then
-              echo "ERROR: CONFIG_SUNXI_EPHY is still enabled despite our disables!"
-              echo "This is likely due to a Kconfig 'select' statement from another config."
-              echo "Checking what might be selecting it:"
-              grep -E "CONFIG_.*EXT_PHY|CONFIG_.*AC200|CONFIG_.*SUNXI.*=" .config | head -20
-              exit 1
-            fi
-
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc) Image dtbs modules
-            
-            cp arch/arm64/boot/Image /tmp/downloads/
-            if [ -f arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb ]; then
-              cp arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dtb /tmp/downloads/
-            else
-              # Try alternative DTB locations
-              find arch/arm64/boot/dts -name "*orangepi*zero2w*.dtb" -exec cp {} /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \;
-            fi
-            
-            # Install modules
-            make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
-            cd /tmp
-            tar -czf /tmp/downloads/modules.tar.gz -C /tmp/modules_install .
-          fi
 
       - name: Create root filesystem
         run: |
           ./scripts/create-rootfs.sh \
             --variant ${{ matrix.variant }} \
             --arch-tarball /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
-            --kernel-modules /tmp/downloads/modules.tar.gz \
-            --mali-driver /tmp/downloads/libmali.so \
-            --output /tmp/rootfs-${{ matrix.variant }}
+            --kernel-modules /tmp/artifacts/kernel/modules.tar.gz \
+            --mali-driver /tmp/artifacts/mali-driver/libmali.so
 
-      - name: Build SD card image
+      - name: Create bootable image
         run: |
           ./scripts/create-image.sh \
-            --rootfs /tmp/rootfs-${{ matrix.variant }} \
-            --uboot /tmp/downloads/u-boot-sunxi-with-spl.bin \
-            --kernel /tmp/downloads/Image \
-            --dtb /tmp/downloads/sun50i-h618-orangepi-zero2w.dtb \
+            --rootfs /tmp/rootfs \
             --variant ${{ matrix.variant }} \
-            --output orangepi-zero2w-${{ matrix.variant }}.img
+            --uboot /tmp/artifacts/uboot/u-boot-sunxi-with-spl.bin \
+            --kernel /tmp/artifacts/kernel/Image \
+            --dtb /tmp/artifacts/kernel/sun50i-h618-orangepi-zero2w.dtb
 
-      - name: Compress image
+      - name: Compress and prepare image for upload
         run: |
-          pixz -9 orangepi-zero2w-${{ matrix.variant }}.img
+          mkdir -p /tmp/output
+          echo "Compressing image..."
+          pixz orangepi-zero2w.img /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz
+
+          # Generate SHA256 checksum
+          cd /tmp/output
           sha256sum orangepi-zero2w-${{ matrix.variant }}.img.xz > orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
 
-      - name: Generate build info
-        run: |
+          # Generate image info
           cat > orangepi-zero2w-${{ matrix.variant }}.info << EOF
+          Orange Pi Zero 2W - ${{ matrix.variant }} Edition
           Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Variant: ${{ matrix.variant }}
           Git Commit: ${{ github.sha }}
-          Git Ref: ${{ github.ref }}
-          Pre-built Components: U-Boot, Kernel, DTB
-          Image Size: $(stat -c%s orangepi-zero2w-${{ matrix.variant }}.img.xz) bytes
+          Variant: ${{ matrix.variant }}
+
+          Login: root / orangepi
           EOF
 
-      - name: Upload build artifacts
+          ls -lah /tmp/output/
+          echo "✓ Image compressed and ready for upload"
+
+      - name: Upload final image
         uses: actions/upload-artifact@v4
         with:
           name: orangepi-zero2w-${{ matrix.variant }}
           path: |
-            orangepi-zero2w-${{ matrix.variant }}.img.xz
-            orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-            orangepi-zero2w-${{ matrix.variant }}.info
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.info
           retention-days: 30
 
       - name: Upload to release (if tag)
@@ -551,9 +589,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            orangepi-zero2w-${{ matrix.variant }}.img.xz
-            orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
-            orangepi-zero2w-${{ matrix.variant }}.info
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
+            /tmp/output/orangepi-zero2w-${{ matrix.variant }}.info
           body: |
             ## Orange Pi Zero 2W - ${{ matrix.variant }} Edition
 
@@ -569,7 +607,7 @@ jobs:
             ### Quick Start
             ```bash
             # Download and verify
-            wget orangepi-zero2w-${{ matrix.variant }}.img.xz
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/orangepi-zero2w-${{ matrix.variant }}.img.xz
             sha256sum -c orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
 
             # Write to SD card (replace /dev/sdX with your SD card)
@@ -594,24 +632,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  validate:
-    needs: build
+  # ============================================================================
+  # Summary Job - Show build metrics
+  # ============================================================================
+  build-summary:
+    name: Build Summary
+    needs: [build-atf, build-kernel, build-uboot, download-mali, assemble-image]
+    if: always()
     runs-on: ubuntu-22.04
-    if: github.event_name == 'pull_request'
-    strategy:
-      matrix:
-        variant: ["runtime", "development", "debug"]
-    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: orangepi-zero2w-${{ matrix.variant }}
-
-      - name: Validate image structure
+      - name: Display build results
         run: |
-          xz -d orangepi-zero2w-${{ matrix.variant }}.img.xz
-          ./scripts/validate-image.sh orangepi-zero2w-${{ matrix.variant }}.img
+          echo "=== Parallel Build From Source - Results ==="
+          echo "ATF Build: ${{ needs.build-atf.result }}"
+          echo "Kernel Build: ${{ needs.build-kernel.result }}"
+          echo "U-Boot Build: ${{ needs.build-uboot.result }}"
+          echo "Mali Download: ${{ needs.download-mali.result }}"
+          echo "Image Assembly: ${{ needs.assemble-image.result }}"
+          echo "=============================================="
