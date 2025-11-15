@@ -192,18 +192,6 @@ jobs:
               echo "WARNING: Failed to download prebuilt modules"
               SUCCESS=false
             fi
-            
-            # Extract modules if download succeeded
-            if [ -f /tmp/downloads/modules.tar.gz ]; then
-              mkdir -p /tmp
-              if tar -tzf /tmp/downloads/modules.tar.gz >/dev/null 2>&1; then
-                tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/
-              else
-                echo "WARNING: modules.tar.gz is corrupted or empty"
-                rm -f /tmp/downloads/modules.tar.gz
-                SUCCESS=false
-              fi
-            fi
           else
             # No components tag available
             echo "No components release available, will build from source"
@@ -508,9 +496,6 @@ jobs:
             make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
             cd /tmp
             tar -czf /tmp/downloads/modules.tar.gz -C /tmp/modules_install .
-            # Extract to the expected location
-            mkdir -p /tmp/modules
-            tar -xzf /tmp/downloads/modules.tar.gz -C /tmp/modules/
           fi
 
       - name: Create root filesystem
@@ -518,7 +503,7 @@ jobs:
           ./scripts/create-rootfs.sh \
             --variant ${{ matrix.variant }} \
             --arch-tarball /tmp/downloads/ArchLinuxARM-aarch64-latest.tar.gz \
-            --kernel-modules /tmp/modules \
+            --kernel-modules /tmp/downloads/modules.tar.gz \
             --mali-driver /tmp/downloads/libmali.so \
             --output /tmp/rootfs-${{ matrix.variant }}
 
