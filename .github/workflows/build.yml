@@ -12,13 +12,17 @@ on:
       build_variant:
         description: 'Build variant to create'
         required: true
-        default: 'runtime'
+        default: 'all'
         type: choice
         options:
         - runtime
         - development
         - debug
         - all
+      release_tag:
+        description: 'Release tag (e.g., v0.1.0-alpha.1) - creates GitHub release if provided'
+        required: false
+        type: string
 
 env:
   DEBIAN_FRONTEND: noninteractive
@@ -581,10 +585,11 @@ jobs:
             /tmp/output/orangepi-zero2w-${{ matrix.variant }}.info
           retention-days: 30
 
-      - name: Upload to release (if tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload to release (if release_tag provided)
+        if: github.event.inputs.release_tag != ''
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.event.inputs.release_tag }}
           files: |
             /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz
             /tmp/output/orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
@@ -604,7 +609,7 @@ jobs:
             ### Quick Start
             ```bash
             # Download and verify
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/orangepi-zero2w-${{ matrix.variant }}.img.xz
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.release_tag }}/orangepi-zero2w-${{ matrix.variant }}.img.xz
             sha256sum -c orangepi-zero2w-${{ matrix.variant }}.img.xz.sha256
 
             # Write to SD card (replace /dev/sdX with your SD card)
