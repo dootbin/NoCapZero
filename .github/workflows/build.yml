@@ -328,9 +328,9 @@ jobs:
           fi
 
           # Install modules
-          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_install modules_install
-          cd /tmp
-          tar -czf /tmp/kernel-output/modules.tar.gz -C /tmp/modules_install .
+          make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=/tmp/modules_output/modules modules_install
+          cd /tmp/modules_output
+          tar -czf /tmp/kernel-output/modules.tar.gz modules/
 
       - name: Upload Kernel artifacts
         uses: actions/upload-artifact@v4
