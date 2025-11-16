@@ -64,15 +64,9 @@ sudo tar -xpf "$ARCH_TARBALL" -C "$OUTPUT"
 echo "Installing kernel modules..."
 # Remove Arch Linux's kernel modules first (we provide our own custom kernel)
 sudo rm -rf "$OUTPUT/lib/modules"
-sudo mkdir -p "$OUTPUT/lib/modules"
-# Extract modules tarball to temporary location
-TEMP_MODULES="/tmp/kernel-modules-extract"
-mkdir -p "$TEMP_MODULES"
-sudo tar -xzf "$KERNEL_MODULES" -C "$TEMP_MODULES"
-# Copy modules to rootfs (tarball has modules/lib/modules/ structure)
-sudo cp -a "$TEMP_MODULES/modules/lib/modules/"* "$OUTPUT/lib/modules/"
-# Clean up
-rm -rf "$TEMP_MODULES"
+sudo mkdir -p "$OUTPUT/lib"
+# Extract modules directly to rootfs (tarball contains lib/modules/... structure)
+sudo tar -xzf "$KERNEL_MODULES" -C "$OUTPUT"
 
 # Install Mali GPU driver
 echo "Installing Mali GPU driver..."
