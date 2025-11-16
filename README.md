@@ -217,80 +217,130 @@ This repository contains automated workflows that **build everything from source
 ### Workflow Structure
 ```
 .github/workflows/
-├── build.yml              # Main build-from-source workflow
-├── build-components.yml   # Component building workflow
-├── bootstrap-components.yml # Initial component bootstrap
-├── release.yml            # Release creation workflow
-└── test.yml               # Hardware testing workflow
+├── build.yml              # Main parallel build-from-source workflow
+└── build-components.yml   # Weekly component pre-build (for faster testing)
 ```
 
 ### Build Workflow (`build.yml`)
 
-**Triggered on every push to main branch and pull requests.**
+**Parallel build architecture** that builds everything from source simultaneously across multiple jobs.
 
-This workflow builds **everything from source** on every run:
+**Triggered by:**
+- Push to main branch
+- Pull requests
+- Manual workflow_dispatch (for creating releases)
 
-1. **Build ARM Trusted Firmware (ATF)**
-   - Clone ARM's official ATF repository
+**Build Architecture - Parallel Jobs:**
+
+```
+┌─────────────────────┐  ┌──────────────────┐  ┌─────────────────┐
+│ Build ARM Trusted   │  │  Build Linux     │  │  Download &     │
+│ Firmware (~30s)     │  │  Kernel (~22min) │  │  Verify Mali    │
+└──────────┬──────────┘  └────────┬─────────┘  │  Driver (~7s)   │
+           │                      │             └────────┬────────┘
+           v                      │                      │
+┌─────────────────────┐           │                      │
+│ Build U-Boot        │           │                      │
+│ Bootloader (~1.5min)│           │                      │
+└──────────┬──────────┘           │                      │
+           │                      │                      │
+           └──────────┬───────────┴──────────────────────┘
+                      v
+           ┌─────────────────────────┐
+           │  Assemble Images        │
+           │  (runtime/dev/debug)    │
+           │  Runs in parallel       │
+           │  (~2-4min each)         │
+           └─────────────────────────┘
+```
+
+**Total build time: ~25-30 minutes** (dominated by kernel compilation)
+
+**Job Details:**
+
+1. **Build ARM Trusted Firmware** (~30s, parallel)
+   - Clone ARM's official ATF repository (latest stable tag)
    - Compile BL31 for Allwinner H618 SoC
    - Cross-compile for ARM64 using aarch64-linux-gnu-gcc
 
-2. **Build U-Boot Bootloader**
-   - Clone official U-Boot repository
-   - Apply Orange Pi Zero 2W defconfig
-   - Link with ATF BL31
-   - Cross-compile for ARM
-
-3. **Build Linux Kernel from Source**
+2. **Build Linux Kernel** (~22min, parallel)
    - Clone Orange Pi vendor kernel (6.1-sun50iw9 branch)
    - Apply custom kernel configuration from `configs/kernel-config`
    - **Strip 80+ unnecessary drivers** (Tegra, Rockchip, Qualcomm, AMD/Intel GPUs, etc.)
-   - Disable problematic drivers with build failures
+   - Disable problematic drivers (SUNXI_EPHY, Tegra sound, etc.)
    - Compile minimal, hardware-specific kernel Image and device tree blobs
-   - Build only Allwinner-relevant kernel modules
+   - Build kernel modules with structure: `modules/lib/modules/6.x.x/`
+   - Package as modules.tar.gz
 
-4. **Download & Verify Mali GPU Driver**
+3. **Build U-Boot Bootloader** (~1.5min, depends on ATF)
+   - Clone official U-Boot repository (latest stable tag)
+   - Apply Orange Pi Zero 2W defconfig
+   - Link with compiled ATF BL31
+   - Cross-compile for ARM
+
+4. **Download & Verify Mali GPU Driver** (~7s, parallel)
    - Download binary driver from LibreELEC (no source available)
    - Calculate SHA256 checksum
    - **Verify against expected checksum** (fail build on mismatch)
+   - See `checksums/libmali-bifrost-g31-r16p0-gbm.sha256`
 
-5. **Create Root Filesystem**
-   - Download Arch Linux ARM base system
-   - Install compiled kernel modules
-   - Install verified Mali GPU driver
-   - Configure USB gadget support and system services
-   - Variant-specific customization (runtime/development/debug)
+5. **Assemble Images** (3 variants in parallel, 2-4min each)
+   - **Runtime Edition**: Minimal system (~1GB image)
+   - **Development Edition**: With dev tools (~1.2GB image)
+   - **Debug Edition**: Dev + debug symbols (~1.5GB image)
 
-6. **Generate Bootable Image**
-   - Create SD card partition layout
-   - Install compiled U-Boot to boot sector
-   - Copy compiled kernel and DTB
-   - Package root filesystem
-   - Generate compressed image for distribution
+   Each assembly job:
+   - Downloads Arch Linux ARM base system
+   - Removes Arch's kernel modules (we provide our own)
+   - Extracts compiled kernel modules from tarball
+   - Installs verified Mali GPU driver
+   - Removes 500+MB unnecessary firmware (keeps only Realtek/Broadcom/Allwinner)
+   - Configures USB gadget support and system services
+   - Creates SD card image with U-Boot, kernel, DTB, and rootfs
+   - Compresses image for distribution
 
-7. **Upload Artifacts**
-   - Store build artifacts for 30 days
-   - Upload images to release drafts
-
-**Build time**: 30-90 minutes (compiling kernel + U-Boot + ATF from scratch)
+**Artifacts:**
+- Build artifacts stored for 90 days
+- Images uploaded to GitHub Releases when `release_tag` input provided
 
 ### Component Build Workflow (`build-components.yml`)
 
-**Same as main build workflow** - builds all components from source.
+**Runs weekly on Sundays** to pre-build components for faster iteration during development.
 
-This workflow exists to create reusable component artifacts, but the main build workflow (`build.yml`) **always builds from source** and does not rely on these pre-built components for supply chain security reasons.
+Builds the same components as `build.yml` but stores them as a "components-latest" release. The main build workflow **does not use these** - it always builds from source. This workflow exists only to speed up testing when you need quick iteration on rootfs/image assembly scripts.
 
-### Release Workflow (`release.yml`)
+**Triggered by:**
+- Weekly schedule (Sunday 00:00 UTC)
+- Manual workflow_dispatch
+- Push to component-related paths (kernel configs, patches)
 
-Triggered when a new tag is pushed:
+### Creating Releases
 
-1. **Trigger Build Workflow**
-   - Builds all three variants using pre-built components
+**Use workflow_dispatch to create versioned releases:**
 
-2. **Create GitHub Release**
-   - Generate comprehensive release notes
-   - Create draft release for manual publishing
-   - Include installation instructions
+```bash
+# Via GitHub UI:
+# Actions → "Build Orange Pi Zero 2W Images" → Run workflow
+# - Branch: main
+# - Build variant: all
+# - Release tag: v0.1.0-alpha.1
+
+# Via gh CLI:
+gh workflow run build.yml \
+  --ref main \
+  -f build_variant=all \
+  -f release_tag=v0.1.0-alpha.1
+```
+
+**Why workflow_dispatch instead of tag triggers?**
+
+Previously, we used `on: push: tags: v*` to trigger builds. This caused a critical problem: **GitHub Actions checks out the workflow file from the tagged commit**, not from latest main. If you tag an old commit, you get the OLD (potentially broken) workflow, leading to false positive failures.
+
+**New approach:**
+- Trigger workflow manually with `release_tag` input
+- Workflow runs from main (always uses latest working code)
+- Tag is created and release is published if build succeeds
+- No more stale workflow issues
 
 ## Configuration Options
 
