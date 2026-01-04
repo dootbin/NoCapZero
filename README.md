@@ -191,10 +191,39 @@ Pre-built images are available in the [Releases](../../releases) section:
    sync
    ```
 
-3. **First boot**:
+3. **Configure WiFi (Optional but Recommended)**:
+   ```bash
+   # Mount the boot partition
+   sudo mount /dev/sdX1 /mnt
+
+   # Create WiFi config
+   sudo tee /mnt/wifi.conf > /dev/null << EOF
+   WIFI_SSID="YourNetworkName"
+   WIFI_PSK="YourPassword"
+   EOF
+
+   # Unmount
+   sudo umount /mnt
+   ```
+
+4. **First boot**:
    - Insert SD card into Orange Pi Zero 2W
-   - Connect HDMI and power
+   - Connect power (WiFi will auto-configure if wifi.conf exists)
+   - SSH will be enabled automatically
    - Default login: `root` / `orangepi`
+
+   ```bash
+   # Find device IP (check your router, or use nmap)
+   nmap -sn 192.168.1.0/24
+
+   # SSH into device
+   ssh root@<device-ip>
+   # Password: orangepi
+   ```
+
+5. **Alternative: HDMI Console Access**:
+   - Connect HDMI and USB keyboard
+   - Login at console: `root` / `orangepi`
 
 ### Deploy Your Application
 

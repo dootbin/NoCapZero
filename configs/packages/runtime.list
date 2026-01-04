@@ -1,15 +1,28 @@
+# Base system
 base
 linux-firmware
+systemd
+
+# Networking essentials
+openssh
+wpa_supplicant
+iw
+dhcpcd
+
+# GPU and graphics
 mesa
-mali-g31-firmware
 libdrm
 wayland
+
+# Application runtime
 gtk4
 webkit2gtk
 gstreamer
 ffmpeg
 openssl
+
+# Bluetooth
 bluez
-wpa_supplicant
-systemd
+
+# Development (for static binary compilation on device if needed)
 go

@@ -1,0 +1,13 @@
+# WiFi Configuration for Orange Pi Zero 2W
+#
+# Instructions:
+# 1. Copy this file to the boot partition of your SD card as "wifi.conf"
+# 2. Edit WIFI_SSID and WIFI_PSK with your network credentials
+# 3. On first boot, the system will automatically configure WiFi
+#
+# Example:
+#   WIFI_SSID="MyNetwork"
+#   WIFI_PSK="MyPassword123"
+
+WIFI_SSID="YourNetworkName"
+WIFI_PSK="YourPassword"

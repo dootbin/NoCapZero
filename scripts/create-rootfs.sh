@@ -45,11 +45,6 @@ if [ -z "$ARCH_TARBALL" ] || [ -z "$KERNEL_MODULES" ] || [ -z "$MALI_DRIVER" ]; 
   exit 1
 fi
 
-# Package lists based on variant
-RUNTIME_PACKAGES="base linux-firmware mesa libdrm gtk4 webkit2gtk openssh wpa_supplicant"
-DEVELOPMENT_PACKAGES="$RUNTIME_PACKAGES git gcc make cmake go"
-DEBUG_PACKAGES="$DEVELOPMENT_PACKAGES gdb valgrind strace perf"
-
 # Create clean output directory
 sudo rm -rf "$OUTPUT"
 sudo mkdir -p "$OUTPUT"
@@ -81,6 +76,51 @@ sudo cp "$MALI_DRIVER" "$OUTPUT/usr/lib/libmali.so"
 sudo ln -sf libmali.so "$OUTPUT/usr/lib/libEGL.so.1"
 sudo ln -sf libmali.so "$OUTPUT/usr/lib/libGLESv2.so.2"
 sudo ln -sf libmali.so "$OUTPUT/usr/lib/libgbm.so.1"
+
+# Install packages based on variant
+echo "Installing packages for $VARIANT variant..."
+
+# Get the script directory to find package lists
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_LIST="$SCRIPT_DIR/../configs/packages/${VARIANT}.list"
+
+if [ ! -f "$PACKAGE_LIST" ]; then
+  echo "ERROR: Package list not found: $PACKAGE_LIST"
+  exit 1
+fi
+
+# Set up chroot environment for package installation
+echo "Setting up chroot environment..."
+sudo mount -t proc proc "$OUTPUT/proc"
+sudo mount -t sysfs sys "$OUTPUT/sys"
+sudo mount --bind /dev "$OUTPUT/dev"
+sudo mount --bind /dev/pts "$OUTPUT/dev/pts"
+
+# Copy DNS configuration
+sudo cp /etc/resolv.conf "$OUTPUT/etc/resolv.conf"
+
+# Initialize pacman keyring and install packages
+echo "Initializing pacman keyring..."
+sudo chroot "$OUTPUT" /bin/bash -c "pacman-key --init && pacman-key --populate archlinuxarm"
+
+echo "Installing packages from $PACKAGE_LIST..."
+# Read package list and install (skip empty lines and comments)
+PACKAGES=$(grep -v '^#' "$PACKAGE_LIST" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
+echo "Packages to install: $PACKAGES"
+sudo chroot "$OUTPUT" /bin/bash -c "pacman -Sy --noconfirm $PACKAGES"
+
+# Enable essential services
+echo "Enabling SSH and network services..."
+sudo chroot "$OUTPUT" systemctl enable sshd
+sudo chroot "$OUTPUT" systemctl enable systemd-networkd
+sudo chroot "$OUTPUT" systemctl enable systemd-resolved
+
+# Clean up chroot mounts
+echo "Cleaning up chroot environment..."
+sudo umount "$OUTPUT/dev/pts" || true
+sudo umount "$OUTPUT/dev" || true
+sudo umount "$OUTPUT/sys" || true
+sudo umount "$OUTPUT/proc" || true
 
 # Create necessary configuration based on variant
 sudo mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
@@ -166,6 +206,28 @@ ssh-keygen -A
 
 # Set hostname
 echo "orangepi-zero2w" > /etc/hostname
+
+# Configure WiFi if wifi.conf exists on boot partition
+if [ -f /boot/wifi.conf ]; then
+  echo "Found WiFi configuration, setting up..."
+  source /boot/wifi.conf
+
+  if [ -n "\$WIFI_SSID" ] && [ -n "\$WIFI_PSK" ]; then
+    # Create wpa_supplicant configuration
+    wpa_passphrase "\$WIFI_SSID" "\$WIFI_PSK" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+    # Enable WiFi services
+    systemctl enable wpa_supplicant@wlan0
+    systemctl start wpa_supplicant@wlan0
+
+    systemctl enable dhcpcd@wlan0
+    systemctl start dhcpcd@wlan0
+
+    echo "WiFi configured for SSID: \$WIFI_SSID"
+  else
+    echo "WiFi config file missing WIFI_SSID or WIFI_PSK"
+  fi
+fi
 EOF
 
 sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
