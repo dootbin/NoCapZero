@@ -96,13 +96,11 @@ sudo mount -t sysfs sys "$OUTPUT/sys"
 sudo mount --bind /dev "$OUTPUT/dev"
 sudo mount --bind /dev/pts "$OUTPUT/dev/pts"
 
-# Configure DNS for chroot (use Google DNS for reliability)
+# Bind mount resolv.conf for DNS resolution
 echo "Configuring DNS for chroot..."
-sudo tee "$OUTPUT/etc/resolv.conf" > /dev/null << EOF
-nameserver 8.8.8.8
-nameserver 8.8.4.4
-nameserver 1.1.1.1
-EOF
+sudo mkdir -p "$OUTPUT/run/systemd/resolve"
+sudo touch "$OUTPUT/etc/resolv.conf"
+sudo mount --bind /etc/resolv.conf "$OUTPUT/etc/resolv.conf"
 
 # Initialize pacman keyring and install packages
 echo "Initializing pacman keyring..."
@@ -139,6 +137,7 @@ sudo chroot "$OUTPUT" systemctl enable systemd-resolved
 
 # Clean up chroot mounts
 echo "Cleaning up chroot environment..."
+sudo umount "$OUTPUT/etc/resolv.conf" || true
 sudo umount "$OUTPUT/dev/pts" || true
 sudo umount "$OUTPUT/dev" || true
 sudo umount "$OUTPUT/sys" || true
