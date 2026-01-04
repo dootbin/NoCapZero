@@ -107,7 +107,24 @@ echo "Installing packages from $PACKAGE_LIST..."
 # Read package list and install (skip empty lines and comments)
 PACKAGES=$(grep -v '^#' "$PACKAGE_LIST" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
 echo "Packages to install: $PACKAGES"
-sudo chroot "$OUTPUT" /bin/bash -c "pacman -Sy --noconfirm $PACKAGES"
+
+# Disable landlock sandbox (not supported in GitHub Actions kernel) and install packages
+# Retry up to 3 times in case of mirror issues
+for i in 1 2 3; do
+  echo "Attempt $i: Installing packages..."
+  if sudo chroot "$OUTPUT" /bin/bash -c "pacman -Sy --noconfirm --disable-sandbox $PACKAGES"; then
+    echo "Package installation successful"
+    break
+  else
+    if [ $i -lt 3 ]; then
+      echo "Package installation failed, retrying in 10 seconds..."
+      sleep 10
+    else
+      echo "Package installation failed after 3 attempts"
+      exit 1
+    fi
+  fi
+done
 
 # Enable essential services
 echo "Enabling SSH and network services..."
