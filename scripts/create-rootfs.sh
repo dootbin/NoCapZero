@@ -89,59 +89,33 @@ if [ ! -f "$PACKAGE_LIST" ]; then
   exit 1
 fi
 
-# Set up chroot environment for package installation
-echo "Setting up chroot environment..."
-sudo mount -t proc proc "$OUTPUT/proc"
-sudo mount -t sysfs sys "$OUTPUT/sys"
-sudo mount --bind /dev "$OUTPUT/dev"
-sudo mount --bind /dev/pts "$OUTPUT/dev/pts"
-
-# Bind mount resolv.conf for DNS resolution
-echo "Configuring DNS for chroot..."
-sudo mkdir -p "$OUTPUT/run/systemd/resolve"
-sudo touch "$OUTPUT/etc/resolv.conf"
-sudo mount --bind /etc/resolv.conf "$OUTPUT/etc/resolv.conf"
-
-# Initialize pacman keyring and install packages
-echo "Initializing pacman keyring..."
-sudo chroot "$OUTPUT" /bin/bash -c "pacman-key --init && pacman-key --populate archlinuxarm"
-
-echo "Installing packages from $PACKAGE_LIST..."
-# Read package list and install (skip empty lines and comments)
+# Read package list (skip empty lines and comments)
 PACKAGES=$(grep -v '^#' "$PACKAGE_LIST" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
 echo "Packages to install: $PACKAGES"
 
-# Disable landlock sandbox (not supported in GitHub Actions kernel) and install packages
-# Retry up to 3 times in case of mirror issues
-for i in 1 2 3; do
-  echo "Attempt $i: Installing packages..."
-  if sudo chroot "$OUTPUT" /bin/bash -c "pacman -Sy --noconfirm --disable-sandbox $PACKAGES"; then
-    echo "Package installation successful"
-    break
-  else
-    if [ $i -lt 3 ]; then
-      echo "Package installation failed, retrying in 10 seconds..."
-      sleep 10
-    else
-      echo "Package installation failed after 3 attempts"
-      exit 1
-    fi
-  fi
-done
+# For now, skip additional package installation
+# The base Arch Linux ARM tarball already has systemd
+# We'll install SSH and other packages on first boot via pacman
+echo "Note: Using base Arch Linux ARM system"
+echo "Additional packages ($PACKAGES) should be installed on first boot"
 
-# Enable essential services
-echo "Enabling SSH and network services..."
-sudo chroot "$OUTPUT" systemctl enable sshd
-sudo chroot "$OUTPUT" systemctl enable systemd-networkd
-sudo chroot "$OUTPUT" systemctl enable systemd-resolved
+# Create a first-boot script to install packages
+sudo mkdir -p "$OUTPUT/usr/local/bin"
+sudo tee "$OUTPUT/usr/local/bin/install-packages.sh" > /dev/null << PKGEOF
+#!/bin/bash
+# Auto-install packages on first boot if network is available
+if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+  echo "Network available, installing packages..."
+  pacman -Sy --noconfirm --needed $PACKAGES && touch /var/lib/packages-installed
+else
+  echo "No network, skipping package installation"
+fi
+PKGEOF
 
-# Clean up chroot mounts
-echo "Cleaning up chroot environment..."
-sudo umount "$OUTPUT/etc/resolv.conf" || true
-sudo umount "$OUTPUT/dev/pts" || true
-sudo umount "$OUTPUT/dev" || true
-sudo umount "$OUTPUT/sys" || true
-sudo umount "$OUTPUT/proc" || true
+sudo chmod +x "$OUTPUT/usr/local/bin/install-packages.sh"
+
+# Note: We skip package installation during image build
+# Packages will be installed on first boot when network is available
 
 # Create necessary configuration based on variant
 sudo mkdir -p "$OUTPUT/etc/systemd/system/multi-user.target.wants"
@@ -221,10 +195,6 @@ sudo tee "$OUTPUT/usr/local/bin/firstboot.sh" > /dev/null << EOF
 echo "Resizing root partition..."
 /usr/bin/resize2fs /dev/mmcblk0p2
 
-# Generate SSH host keys
-echo "Generating SSH host keys..."
-ssh-keygen -A
-
 # Set hostname
 echo "orangepi-zero2w" > /etc/hostname
 
@@ -234,6 +204,12 @@ if [ -f /boot/wifi.conf ]; then
   source /boot/wifi.conf
 
   if [ -n "\$WIFI_SSID" ] && [ -n "\$WIFI_PSK" ]; then
+    # Install wpa_supplicant if not present
+    if ! command -v wpa_passphrase >/dev/null 2>&1; then
+      echo "Installing wpa_supplicant..."
+      pacman -Sy --noconfirm wpa_supplicant dhcpcd
+    fi
+
     # Create wpa_supplicant configuration
     wpa_passphrase "\$WIFI_SSID" "\$WIFI_PSK" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 
@@ -249,13 +225,29 @@ if [ -f /boot/wifi.conf ]; then
     echo "WiFi config file missing WIFI_SSID or WIFI_PSK"
   fi
 fi
+
+# Install additional packages if network is available and not already installed
+if [ ! -f /var/lib/packages-installed ]; then
+  echo "Installing additional packages..."
+  /usr/local/bin/install-packages.sh
+fi
+
+# Generate SSH host keys (after openssh is installed)
+if command -v ssh-keygen >/dev/null 2>&1; then
+  echo "Generating SSH host keys..."
+  ssh-keygen -A
+  systemctl enable sshd
+fi
 EOF
 
 sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
 
-# Set root password
+# Set root password (generate hash and write to shadow file)
 echo "Setting root password..."
-echo 'root:orangepi' | sudo chroot "$OUTPUT" chpasswd
+# Generate password hash for 'orangepi'
+PASS_HASH=$(openssl passwd -6 "orangepi")
+# Update shadow file with the hash
+sudo sed -i "s|^root:[^:]*:|root:$PASS_HASH:|" "$OUTPUT/etc/shadow"
 
 # CRITICAL: Remove ALL firmware except what Orange Pi Zero 2W actually needs
 # Orange Pi Zero 2W uses:
