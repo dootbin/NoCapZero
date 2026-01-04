@@ -96,8 +96,13 @@ sudo mount -t sysfs sys "$OUTPUT/sys"
 sudo mount --bind /dev "$OUTPUT/dev"
 sudo mount --bind /dev/pts "$OUTPUT/dev/pts"
 
-# Copy DNS configuration
-sudo cp /etc/resolv.conf "$OUTPUT/etc/resolv.conf"
+# Configure DNS for chroot (use Google DNS for reliability)
+echo "Configuring DNS for chroot..."
+sudo tee "$OUTPUT/etc/resolv.conf" > /dev/null << EOF
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+nameserver 1.1.1.1
+EOF
 
 # Initialize pacman keyring and install packages
 echo "Initializing pacman keyring..."
