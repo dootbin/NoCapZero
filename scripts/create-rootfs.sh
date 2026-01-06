@@ -104,11 +104,31 @@ sudo mkdir -p "$OUTPUT/usr/local/bin"
 sudo tee "$OUTPUT/usr/local/bin/install-packages.sh" > /dev/null << PKGEOF
 #!/bin/bash
 # Auto-install packages on first boot if network is available
-if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-  echo "Network available, installing packages..."
-  pacman -Sy --noconfirm --needed $PACKAGES && touch /var/lib/packages-installed
+
+LOGFILE="/var/log/firstboot.log"
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] \$*" | tee -a "\$LOGFILE"
+}
+
+log "Checking network connectivity..."
+if ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
+  log "✓ Network available"
+  log "Installing packages: $PACKAGES"
+
+  if pacman -Sy --noconfirm --needed $PACKAGES 2>&1 | tee -a "\$LOGFILE"; then
+    touch /var/lib/packages-installed
+    log "✓ All packages installed successfully"
+    log "Installed packages:"
+    pacman -Q $PACKAGES | tee -a "\$LOGFILE"
+    exit 0
+  else
+    log "✗ Package installation failed"
+    exit 1
+  fi
 else
-  echo "No network, skipping package installation"
+  log "✗ No network connectivity - skipping package installation"
+  log "Cannot reach 8.8.8.8"
+  exit 1
 fi
 PKGEOF
 
@@ -189,55 +209,147 @@ sudo ln -sf ../firstboot.service "$OUTPUT/etc/systemd/system/multi-user.target.w
 
 sudo tee "$OUTPUT/usr/local/bin/firstboot.sh" > /dev/null << EOF
 #!/bin/bash
-# First boot setup script
+# First boot setup script with detailed logging
+
+LOGFILE="/var/log/firstboot.log"
+exec > >(tee -a "\$LOGFILE") 2>&1
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] \$*"
+}
+
+log "=========================================="
+log "First Boot Setup Started"
+log "=========================================="
 
 # Resize root partition to fill SD card
-echo "Resizing root partition..."
-/usr/bin/resize2fs /dev/mmcblk0p2
+log "Resizing root partition..."
+if /usr/bin/resize2fs /dev/mmcblk0p2; then
+    log "✓ Root partition resized successfully"
+else
+    log "✗ Failed to resize root partition"
+fi
 
 # Set hostname
+log "Setting hostname..."
 echo "orangepi-zero2w" > /etc/hostname
+log "✓ Hostname set to orangepi-zero2w"
 
 # Configure WiFi if wifi.conf exists on boot partition
 if [ -f /boot/wifi.conf ]; then
-  echo "Found WiFi configuration, setting up..."
+  log "Found WiFi configuration file"
+  log "Reading WiFi credentials..."
   source /boot/wifi.conf
 
   if [ -n "\$WIFI_SSID" ] && [ -n "\$WIFI_PSK" ]; then
+    log "WiFi SSID: \$WIFI_SSID"
+
     # Install wpa_supplicant if not present
     if ! command -v wpa_passphrase >/dev/null 2>&1; then
-      echo "Installing wpa_supplicant..."
-      pacman -Sy --noconfirm wpa_supplicant dhcpcd
+      log "Installing wpa_supplicant and dhcpcd..."
+      log "Running: pacman -Sy --noconfirm wpa_supplicant dhcpcd iw"
+
+      if pacman -Sy --noconfirm wpa_supplicant dhcpcd iw 2>&1 | tee -a "\$LOGFILE"; then
+        log "✓ wpa_supplicant and dhcpcd installed"
+      else
+        log "✗ Failed to install wpa_supplicant/dhcpcd"
+        log "Network NOT available - cannot install packages"
+        exit 1
+      fi
+    else
+      log "✓ wpa_supplicant already present"
     fi
 
     # Create wpa_supplicant configuration
-    wpa_passphrase "\$WIFI_SSID" "\$WIFI_PSK" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+    log "Creating wpa_supplicant configuration..."
+    if wpa_passphrase "\$WIFI_SSID" "\$WIFI_PSK" > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf; then
+      log "✓ wpa_supplicant config created"
+    else
+      log "✗ Failed to create wpa_supplicant config"
+    fi
 
-    # Enable WiFi services
+    # Enable and start WiFi services
+    log "Enabling WiFi services..."
     systemctl enable wpa_supplicant@wlan0
     systemctl start wpa_supplicant@wlan0
+    log "✓ wpa_supplicant started"
 
     systemctl enable dhcpcd@wlan0
     systemctl start dhcpcd@wlan0
+    log "✓ dhcpcd started"
 
-    echo "WiFi configured for SSID: \$WIFI_SSID"
+    # Wait for connection
+    log "Waiting for WiFi connection (max 30s)..."
+    for i in {1..30}; do
+      if systemctl is-active --quiet wpa_supplicant@wlan0 && ip addr show wlan0 | grep -q "inet "; then
+        IP=\$(ip -4 addr show wlan0 | grep inet | awk '{print \$2}')
+        log "✓ WiFi connected! IP: \$IP"
+        break
+      fi
+      sleep 1
+      if [ \$i -eq 30 ]; then
+        log "✗ WiFi connection timeout after 30s"
+        log "wpa_supplicant status:"
+        systemctl status wpa_supplicant@wlan0 | tee -a "\$LOGFILE"
+        log "wlan0 interface:"
+        ip addr show wlan0 | tee -a "\$LOGFILE"
+      fi
+    done
+
+    log "WiFi configuration complete for SSID: \$WIFI_SSID"
   else
-    echo "WiFi config file missing WIFI_SSID or WIFI_PSK"
+    log "✗ WiFi config file missing WIFI_SSID or WIFI_PSK"
   fi
+else
+  log "No WiFi configuration file found at /boot/wifi.conf"
+  log "Skipping WiFi setup"
 fi
 
 # Install additional packages if network is available and not already installed
 if [ ! -f /var/lib/packages-installed ]; then
-  echo "Installing additional packages..."
-  /usr/local/bin/install-packages.sh
+  log "Installing additional packages..."
+  if /usr/local/bin/install-packages.sh; then
+    log "✓ Packages installed successfully"
+  else
+    log "✗ Package installation failed (check network)"
+  fi
+else
+  log "Packages already installed (marker file exists)"
 fi
 
 # Generate SSH host keys (after openssh is installed)
 if command -v ssh-keygen >/dev/null 2>&1; then
-  echo "Generating SSH host keys..."
-  ssh-keygen -A
+  log "Generating SSH host keys..."
+  if ssh-keygen -A; then
+    log "✓ SSH host keys generated"
+  else
+    log "✗ Failed to generate SSH host keys"
+  fi
+
+  log "Enabling SSH service..."
   systemctl enable sshd
+  systemctl start sshd
+
+  if systemctl is-active --quiet sshd; then
+    log "✓ SSH service started successfully"
+  else
+    log "✗ SSH service failed to start"
+    systemctl status sshd | tee -a "\$LOGFILE"
+  fi
+else
+  log "✗ ssh-keygen not found - openssh not installed"
 fi
+
+log "=========================================="
+log "First Boot Setup Complete"
+log "=========================================="
+log "Summary:"
+log "  Hostname: orangepi-zero2w"
+log "  WiFi SSID: \${WIFI_SSID:-not configured}"
+log "  WiFi IP: \$(ip -4 addr show wlan0 2>/dev/null | grep inet | awk '{print \$2}' || echo 'not connected')"
+log "  SSH Status: \$(systemctl is-active sshd 2>/dev/null || echo 'not running')"
+log "  Log file: \$LOGFILE"
+log "=========================================="
 EOF
 
 sudo chmod +x "$OUTPUT/usr/local/bin/firstboot.sh"
